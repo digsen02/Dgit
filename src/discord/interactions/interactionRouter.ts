@@ -1,11 +1,13 @@
 import {
   ActionRowBuilder,
+  ButtonInteraction,
   ButtonBuilder,
   ButtonStyle,
   ChatInputCommandInteraction,
   EmbedBuilder,
   Interaction,
   ModalBuilder,
+  ModalSubmitInteraction,
   PermissionFlagsBits,
   TextChannel,
   TextInputBuilder,
@@ -25,7 +27,7 @@ export function hasManageGuildPermission(permissions: { has(permission: bigint):
 }
 
 export class InteractionRouter {
-  private readonly pendingRestores = new Map<string, { guildId: string; userId: string; repositoryChannelId: string; plan: ApplyPlan; expiresAt: number }>();
+  private readonly pendingRestores = new Map<string, { guildId: string; userId: string; repositoryChannelId: string; plan: ApplyPlan; expiresAt: number; confirmationWord: "RESTORE" | "APPLY" }>();
 
   constructor(private readonly service = new DGitService(), private readonly confirms = new ConfirmRouter()) {}
 
@@ -105,36 +107,43 @@ export class InteractionRouter {
     if (interaction.customId.startsWith("dgit:restore-confirm:")) {
       const token = interaction.customId.replace("dgit:restore-confirm:", "");
       const pending = this.pendingRestores.get(token);
-      if (!pending || pending.expiresAt < Date.now()) {
-        this.pendingRestores.delete(token);
-        await interaction.reply({ ephemeral: true, content: t(interaction.locale, "restoreExpired") });
+      if (!(await this.validatePendingRestore(interaction, token, pending))) return;
+      if (pending!.plan.dangerousCount > 0) {
+        const modal = new ModalBuilder()
+          .setCustomId(`dgit:restore-typed:${token}`)
+          .setTitle(`Type ${pending!.confirmationWord} to confirm`)
+          .addComponents(
+            new ActionRowBuilder<TextInputBuilder>().addComponents(
+              new TextInputBuilder()
+                .setCustomId("confirmation")
+                .setLabel(`Type ${pending!.confirmationWord}`)
+                .setStyle(TextInputStyle.Short)
+                .setRequired(true)
+                .setMaxLength(16)
+            )
+          );
+        await interaction.showModal(modal);
         return;
       }
-      if (!interaction.guild || interaction.guild.id !== pending.guildId) {
-        await interaction.reply({ ephemeral: true, content: t(interaction.locale, "restoreWrongGuild") });
-        return;
-      }
-      const isSameUser = interaction.user.id === pending.userId;
-      const isAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) ?? false;
-      if (!isSameUser && !isAdmin) {
-        await interaction.reply({ ephemeral: true, content: t(interaction.locale, "restoreForbidden") });
-        return;
-      }
-      await interaction.deferReply({ ephemeral: true });
-      const result = await this.service.applyRestorePlan(interaction.guild, pending.plan, pending.repositoryChannelId);
-      this.pendingRestores.delete(token);
-      await interaction.editReply(t(interaction.locale, "restoreFinished", {
-        success: result.success.length,
-        skipped: result.skipped.length,
-        failed: result.failed.length,
-        details: result.failed.length ? `\n${result.failed.slice(0, 5).map((f) => `${f.step.id}: ${f.error}`).join("\n")}` : ""
-      }));
+      await this.executePendingRestore(interaction, token, pending!);
       return;
     }
     await this.confirms.route(interaction);
   }
 
-  private async routeModal(interaction: import("discord.js").ModalSubmitInteraction): Promise<void> {
+  private async routeModal(interaction: ModalSubmitInteraction): Promise<void> {
+    if (interaction.customId.startsWith("dgit:restore-typed:")) {
+      const token = interaction.customId.replace("dgit:restore-typed:", "");
+      const pending = this.pendingRestores.get(token);
+      if (!(await this.validatePendingRestore(interaction, token, pending))) return;
+      const value = interaction.fields.getTextInputValue("confirmation").trim().toUpperCase();
+      if (value !== pending!.confirmationWord) {
+        await interaction.reply({ ephemeral: true, content: `Confirmation did not match ${pending!.confirmationWord}.` });
+        return;
+      }
+      await this.executePendingRestore(interaction, token, pending!);
+      return;
+    }
     if (interaction.customId !== "dgit:commit-modal") return;
     if (!interaction.guild) {
       await interaction.reply({ ephemeral: true, content: t(interaction.locale, "guildOnly") });
@@ -149,6 +158,56 @@ export class InteractionRouter {
       const message = interaction.fields.getTextInputValue("message");
       const result = await this.service.commit(interaction.guild, interaction.user.id, message);
       await interaction.editReply(t(interaction.locale, "createdCommit", { hash: shortHash(result.commit.hash), branch: result.commit.branch, summary: formatSummary(result.diff.summary) }));
+    } catch (error) {
+      const content = error instanceof LocalizedError
+        ? t(interaction.locale, error.key, error.vars)
+        : t(interaction.locale, "error", { message: error instanceof Error ? error.message : String(error) });
+      await interaction.editReply(content);
+    }
+  }
+
+  private async validatePendingRestore(
+    interaction: ButtonInteraction | ModalSubmitInteraction,
+    token: string,
+    pending: { guildId: string; userId: string; repositoryChannelId: string; plan: ApplyPlan; expiresAt: number; confirmationWord: "RESTORE" | "APPLY" } | undefined
+  ): Promise<boolean> {
+    if (!pending || pending.expiresAt < Date.now()) {
+      this.pendingRestores.delete(token);
+      await interaction.reply({ ephemeral: true, content: t(interaction.locale, "restoreExpired") });
+      return false;
+    }
+    if (!interaction.guild || interaction.guild.id !== pending.guildId) {
+      await interaction.reply({ ephemeral: true, content: t(interaction.locale, "restoreWrongGuild") });
+      return false;
+    }
+    const isSameUser = interaction.user.id === pending.userId;
+    const isAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) ?? false;
+    if (!isSameUser && !isAdmin) {
+      await interaction.reply({ ephemeral: true, content: t(interaction.locale, "restoreForbidden") });
+      return false;
+    }
+    return true;
+  }
+
+  private async executePendingRestore(
+    interaction: ButtonInteraction | ModalSubmitInteraction,
+    token: string,
+    pending: { guildId: string; userId: string; repositoryChannelId: string; plan: ApplyPlan; expiresAt: number; confirmationWord: "RESTORE" | "APPLY" }
+  ): Promise<void> {
+    if (!interaction.guild) {
+      await interaction.reply({ ephemeral: true, content: t(interaction.locale, "guildOnly") });
+      return;
+    }
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      const result = await this.service.applyRestorePlan(interaction.guild, pending.plan, pending.repositoryChannelId, interaction.user.id);
+      this.pendingRestores.delete(token);
+      await interaction.editReply(t(interaction.locale, "restoreFinished", {
+        success: result.success.length,
+        skipped: result.skipped.length,
+        failed: result.failed.length,
+        details: result.failed.length ? `\n${result.failed.slice(0, 5).map((f) => `${f.step.id}: ${f.error}`).join("\n")}` : ""
+      }));
     } catch (error) {
       const content = error instanceof LocalizedError
         ? t(interaction.locale, error.key, error.vars)
@@ -208,7 +267,7 @@ export class InteractionRouter {
       const commit = interaction.options.getString("commit", true);
       const { plan, repository } = await this.service.restorePlan(interaction.guild!, commit);
       const token = `${interaction.id}-${Date.now().toString(36)}`;
-      this.pendingRestores.set(token, { guildId: interaction.guild!.id, userId: interaction.user.id, repositoryChannelId: repository.id, plan, expiresAt: Date.now() + 5 * 60_000 });
+      this.pendingRestores.set(token, { guildId: interaction.guild!.id, userId: interaction.user.id, repositoryChannelId: repository.id, plan, expiresAt: Date.now() + 5 * 60_000, confirmationWord: "RESTORE" });
       const lines = plan.steps.slice(0, 20).map((step) => `${step.dangerous ? "!" : "-"} ${step.description}`);
       const embed = new EmbedBuilder()
         .setTitle(t(interaction.locale, "restoreDryRunTitle"))
@@ -282,7 +341,7 @@ export class InteractionRouter {
       const branch = interaction.options.getString("branch", true);
       const { plan, repository } = await this.service.branchApplyPlan(interaction.guild!, branch);
       const token = `${interaction.id}-${Date.now().toString(36)}`;
-      this.pendingRestores.set(token, { guildId: interaction.guild!.id, userId: interaction.user.id, repositoryChannelId: repository.id, plan, expiresAt: Date.now() + 5 * 60_000 });
+      this.pendingRestores.set(token, { guildId: interaction.guild!.id, userId: interaction.user.id, repositoryChannelId: repository.id, plan, expiresAt: Date.now() + 5 * 60_000, confirmationWord: "APPLY" });
       const lines = plan.steps.slice(0, 20).map((step) => `${step.dangerous ? "!" : "-"} ${step.description}`);
       const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder().setCustomId(`dgit:restore-confirm:${token}`).setLabel(t(interaction.locale, "confirmRestore")).setStyle(ButtonStyle.Danger),
@@ -388,7 +447,7 @@ export class InteractionRouter {
     if (group === "maintenance" && sub === "on") {
       const { plan, repository } = await this.service.maintenancePlan(interaction.guild!);
       const token = `${interaction.id}-${Date.now().toString(36)}`;
-      this.pendingRestores.set(token, { guildId: interaction.guild!.id, userId: interaction.user.id, repositoryChannelId: repository.id, plan, expiresAt: Date.now() + 5 * 60_000 });
+      this.pendingRestores.set(token, { guildId: interaction.guild!.id, userId: interaction.user.id, repositoryChannelId: repository.id, plan, expiresAt: Date.now() + 5 * 60_000, confirmationWord: "APPLY" });
       const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder().setCustomId(`dgit:restore-confirm:${token}`).setLabel(t(interaction.locale, "confirmRestore")).setStyle(ButtonStyle.Danger),
         new ButtonBuilder().setCustomId(`dgit:restore-cancel:${token}`).setLabel(t(interaction.locale, "cancel")).setStyle(ButtonStyle.Secondary)
@@ -403,7 +462,7 @@ export class InteractionRouter {
     if (group === "maintenance" && sub === "off") {
       const { plan, repository, manifest } = await this.service.maintenanceOffPlan(interaction.guild!);
       const token = `${interaction.id}-${Date.now().toString(36)}`;
-      this.pendingRestores.set(token, { guildId: interaction.guild!.id, userId: interaction.user.id, repositoryChannelId: repository.id, plan, expiresAt: Date.now() + 5 * 60_000 });
+      this.pendingRestores.set(token, { guildId: interaction.guild!.id, userId: interaction.user.id, repositoryChannelId: repository.id, plan, expiresAt: Date.now() + 5 * 60_000, confirmationWord: "APPLY" });
       const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder().setCustomId(`dgit:restore-confirm:${token}`).setLabel(t(interaction.locale, "confirmRestore")).setStyle(ButtonStyle.Danger),
         new ButtonBuilder().setCustomId(`dgit:restore-cancel:${token}`).setLabel(t(interaction.locale, "cancel")).setStyle(ButtonStyle.Secondary)

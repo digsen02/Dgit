@@ -25,7 +25,7 @@ export class GuildStateApplier {
     const dangerousCount = diff.summary.dangerous;
     const warnings = ["This plan will create, update, move, overwrite permissions, and delete Discord roles/channels after confirmation."];
     if (dangerousCount > 0) warnings.push("Dangerous changes detected. Review the preview carefully before confirming.");
-    warnings.push("TODO: create an automatic safety backup commit before applying restore/branch/maintenance changes.");
+    warnings.push("If the live server differs from HEAD, DGit will create a safety backup commit before applying this plan.");
     return {
       changes: diff.changes,
       steps: this.orderSteps(steps),

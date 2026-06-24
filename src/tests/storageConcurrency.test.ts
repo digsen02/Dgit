@@ -24,6 +24,8 @@ describe("DiscordRepositoryStorage manifest concurrency", () => {
 
   it("parses manifest message sha", () => {
     expect(parseManifestMessageSha256("[DGIT:MANIFEST:CURRENT]\nsequence: 2\nsha256: sha256:abc")).toBe("sha256:abc");
+    expect(parseManifestMessageSha256("[DGIT:MANIFEST:CURRENT]\nsequence: 2\nsha256: abc")).toBe("sha256:abc");
+    expect(parseManifestMessageSha256("[DGIT:MANIFEST:CURRENT]\nsequence: 2\nSHA256: abc")).toBe("sha256:abc");
     expect(parseManifestMessageSha256("[DGIT:MANIFEST:CURRENT]\nsequence: 2")).toBeNull();
   });
 

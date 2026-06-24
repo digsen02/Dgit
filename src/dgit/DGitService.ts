@@ -84,6 +84,7 @@ export class DGitService {
       diff
     });
     if (manifest.commits[commit.hash]) throw new LocalizedError("commitHashCollision");
+    await this.assertManifestSequence(repository, manifest.manifestSequence);
     const files = await this.storage.uploadCommitObjects(repository, commit, live, diff, manifest.settings.maxAttachmentBytes);
     const updated = this.manifests.addCommit(manifest, this.entryFrom(commit, diff, files));
     await this.storage.uploadManifest(repository, updated, manifest.manifestSequence);
@@ -147,7 +148,9 @@ export class DGitService {
     return { manifest, repository, target, plan: this.applier.planApply(current, target) };
   }
 
-  async applyRestorePlan(guild: Guild, plan: ApplyPlan, repositoryChannelId: string): Promise<ReturnType<GuildStateApplier["applyPlan"]>> {
+  async applyRestorePlan(guild: Guild, plan: ApplyPlan, repositoryChannelId: string, authorId: string): Promise<ReturnType<GuildStateApplier["applyPlan"]>> {
+    const targetHash = plan.targetSnapshot?.stateHash ? shortHash(plan.targetSnapshot.stateHash) : "unknown";
+    await this.createSafetyBackupIfDirty(guild, authorId, `restore ${targetHash}`);
     return this.applier.applyPlan(guild, plan, { repositoryChannelId });
   }
 
@@ -203,14 +206,15 @@ export class DGitService {
     if (!targetBranch) throw new LocalizedError("unknownBranch", { branch });
     if (!targetBranch.head) throw new LocalizedError("branchHasNoHead", { name: branch });
     const target = await this.loadSnapshotByRef(repository, manifest, targetBranch.head);
+    const current = await this.collectIgnored(guild, manifest);
+    const plan = this.applier.planApply(current, target);
+    const result = await this.applier.applyPlan(guild, plan, { repositoryChannelId: repository.id });
+    if (result.failed.length > 0 || result.skipped.length > 0) return { result, manifest, plan };
     const switched = this.updateManifest(manifest, (copy) => {
       copy.currentBranch = branch;
       copy.head = targetBranch.head;
     });
     const saved = await this.saveManifest(repository, switched);
-    const current = await this.collectIgnored(guild, saved);
-    const plan = this.applier.planApply(current, target);
-    const result = await this.applier.applyPlan(guild, plan, { repositoryChannelId: repository.id });
     return { result, manifest: saved, plan };
   }
 
@@ -259,6 +263,7 @@ export class DGitService {
       snapshot: result.snapshot,
       diff
     });
+    await this.assertManifestSequence(repository, manifest.manifestSequence);
     const files = await this.storage.uploadCommitObjects(repository, commit, result.snapshot, diff, manifest.settings.maxAttachmentBytes);
     const updated = this.manifests.addCommit({ ...manifest, currentBranch: targetBranch }, this.entryFrom(commit, diff, files));
     const saved = await this.saveManifest(repository, updated);
@@ -460,6 +465,36 @@ export class DGitService {
     const valid = this.manifests.validate(manifest);
     await this.storage.uploadManifest(repository, valid, expectedSequence);
     return valid;
+  }
+
+  private async assertManifestSequence(repository: TextChannel, expectedSequence: number): Promise<void> {
+    const current = await this.storage.loadManifest(repository);
+    if (current.manifestSequence !== expectedSequence) throw new LocalizedError("repositoryChangedRetry");
+  }
+
+  private async createSafetyBackupIfDirty(guild: Guild, authorId: string, reason: string): Promise<DGitCommit | null> {
+    const { repository, manifest } = await this.loadRepo(guild);
+    const headSnapshot = await this.loadHeadSnapshot(repository, manifest);
+    const live = await this.collectIgnored(guild, manifest);
+    const diff = this.diffEngine.compute(headSnapshot, live, manifest.head, live.stateHash);
+    if (diff.changes.length === 0) return null;
+    const branch = manifest.currentBranch;
+    const commit = this.buildCommit({
+      guildId: guild.id,
+      branch,
+      message: `Safety backup before ${reason}`,
+      authorId,
+      parent: manifest.branches[branch]?.head ?? null,
+      secondParent: null,
+      snapshot: live,
+      diff
+    });
+    if (manifest.commits[commit.hash]) return commit;
+    await this.assertManifestSequence(repository, manifest.manifestSequence);
+    const files = await this.storage.uploadCommitObjects(repository, commit, live, diff, manifest.settings.maxAttachmentBytes);
+    const updated = this.manifests.addCommit(manifest, this.entryFrom(commit, diff, files));
+    await this.storage.uploadManifest(repository, updated, manifest.manifestSequence);
+    return commit;
   }
 
   private async collectIgnored(guild: Guild, manifest: DGitManifest): Promise<DGitSnapshot> {
