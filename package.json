@@ -1,0 +1,33 @@
+{
+  "name": "dgit",
+  "version": "0.1.0",
+  "description": "Discord-native Git-inspired version control bot for guild configuration.",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "register": "tsx src/discord/registerCommands.ts",
+    "register:guild": "tsx src/discord/registerCommands.ts guild",
+    "register:global": "tsx src/discord/registerCommands.ts global",
+    "commands:clear:guild": "tsx src/discord/registerCommands.ts clear:guild",
+    "commands:clear:global": "tsx src/discord/registerCommands.ts clear:global"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.5",
+    "pino": "^9.5.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}
