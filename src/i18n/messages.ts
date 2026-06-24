@@ -29,6 +29,11 @@ export type MessageKey =
   | "restoreDryRunTitle"
   | "noChanges"
   | "dangerousChanges"
+  | "dangerousConfirmationRestoreWord"
+  | "dangerousConfirmationApplyWord"
+  | "dangerousConfirmationModalTitle"
+  | "dangerousConfirmationModalLabel"
+  | "dangerousConfirmationMismatch"
   | "steps"
   | "confirmRestore"
   | "cancel"
@@ -148,6 +153,11 @@ export const messages: Record<SupportedLocale, Record<MessageKey, string>> = {
     restoreDryRunTitle: "DGit 복원 미리보기",
     noChanges: "변경 사항이 없습니다.",
     dangerousChanges: "위험한 변경",
+    dangerousConfirmationRestoreWord: "RESTORE",
+    dangerousConfirmationApplyWord: "APPLY",
+    dangerousConfirmationModalTitle: "{word} 입력 확인",
+    dangerousConfirmationModalLabel: "{word}를 그대로 입력",
+    dangerousConfirmationMismatch: "확인 문구가 {word}와 일치하지 않습니다.",
     steps: "단계",
     confirmRestore: "복원 확인",
     cancel: "취소",
@@ -266,6 +276,11 @@ export const messages: Record<SupportedLocale, Record<MessageKey, string>> = {
     restoreDryRunTitle: "DGit Restore Dry Run",
     noChanges: "No changes.",
     dangerousChanges: "Dangerous changes",
+    dangerousConfirmationRestoreWord: "RESTORE",
+    dangerousConfirmationApplyWord: "APPLY",
+    dangerousConfirmationModalTitle: "Type {word} to confirm",
+    dangerousConfirmationModalLabel: "Type {word}",
+    dangerousConfirmationMismatch: "Confirmation did not match {word}.",
     steps: "Steps",
     confirmRestore: "Confirm Restore",
     cancel: "Cancel",
@@ -384,6 +399,11 @@ export const messages: Record<SupportedLocale, Record<MessageKey, string>> = {
     restoreDryRunTitle: "DGit 恢复预览",
     noChanges: "没有变更。",
     dangerousChanges: "危险变更",
+    dangerousConfirmationRestoreWord: "RESTORE",
+    dangerousConfirmationApplyWord: "APPLY",
+    dangerousConfirmationModalTitle: "输入 {word} 以确认",
+    dangerousConfirmationModalLabel: "输入 {word}",
+    dangerousConfirmationMismatch: "确认文本与 {word} 不一致。",
     steps: "步骤",
     confirmRestore: "确认恢复",
     cancel: "取消",

@@ -171,6 +171,100 @@ DGit은 MongoDB, PostgreSQL, Redis, SQLite, Prisma, TypeORM 같은 외부 저장
 
 모든 JSON은 안정적인 키 정렬 후 gzip 압축되고 SHA-256 해시로 검증됩니다.
 
+## v1 Hardening 안전 모델
+
+DGit v1은 Discord 채널 자체를 저장소로 사용하므로, 데이터베이스 트랜잭션 대신 manifest sequence, 첨부 파일 해시, 권한 정책, apply 전 확인 절차로 안전성을 확보합니다.
+
+### 권한 정책
+
+읽기 전용 명령은 일반 멤버도 사용할 수 있습니다.
+
+- `/dgit status`
+- `/dgit log`
+- `/dgit diff`
+- `/dgit verify`
+- `/dgit check-permission`
+- `/dgit-branch list`
+- `/dgit-ignore list`
+- `/dgit-repo export|history|blame`
+
+저장소나 서버 상태를 바꾸는 명령은 `Manage Guild` 또는 `Administrator` 권한을 요구합니다. 서버 구조를 실제로 적용하거나 삭제할 수 있는 더 위험한 작업은 `Administrator` 권한을 요구합니다.
+
+저장소 채널은 비공개여야 합니다. `@everyone`이 저장소 채널을 보거나, 메시지를 보내거나, 파일을 첨부할 수 있으면 `/dgit init`은 실패합니다. bot은 저장소 채널에서 `View Channel`, `Send Messages`, `Read Message History`, `Attach Files`, `Manage Messages` 권한이 필요합니다.
+
+### Dangerous confirmation
+
+`restore`, branch `apply`, maintenance `on/off`는 먼저 dry-run 계획을 보여줍니다.
+
+계획에 dangerous change가 없으면 확인 버튼만으로 적용할 수 있습니다. 계획에 dangerous change가 하나라도 있으면 버튼 클릭만으로는 적용되지 않습니다. 추가 modal에서 다음 단어를 직접 입력해야 합니다.
+
+- `/dgit restore`: `RESTORE`
+- branch apply 또는 maintenance apply: `APPLY`
+
+이 절차는 실수로 역할, 채널, permission overwrite, guild 설정을 삭제하거나 덮어쓰는 일을 줄이기 위한 장치입니다.
+
+### Safety backup
+
+restore/apply/maintenance 계획을 실제 적용하기 직전에 DGit은 live server state와 현재 branch HEAD를 비교합니다.
+
+차이가 없으면 그대로 적용합니다. 차이가 있으면 먼저 현재 live state를 새 커밋으로 저장합니다.
+
+```text
+Safety backup before restore <shortHash>
+Safety backup before branch apply <branch> <shortHash>
+Safety backup before maintenance on <shortHash>
+Safety backup before maintenance off <shortHash>
+```
+
+이 백업 커밋은 적용 직전의 서버 상태를 보존합니다. 따라서 restore/apply/maintenance 직후에는 manifest sequence가 하나 더 증가할 수 있고, 저장소 채널에 백업 commit/snapshot/diff 첨부 메시지가 추가될 수 있습니다.
+
+### Restore/apply 후 상태 의미
+
+DGit의 apply는 Discord API 작업을 순서대로 실행합니다. Discord 권한, managed role, bot role 위치, 저장소 채널 보호, API 실패 때문에 일부 step이 skipped 또는 failed가 될 수 있습니다.
+
+적용 결과에 failed 또는 skipped가 있으면 live server는 target snapshot과 완전히 같지 않을 수 있습니다. 이 경우 working tree는 dirty 상태로 남을 수 있으며, `/dgit status`로 실제 차이를 확인해야 합니다.
+
+`/dgit-branch checkout`은 branch HEAD를 먼저 적용하고, 모든 step이 성공했을 때만 `currentBranch`를 바꿉니다. 일부 step이 실패하거나 skipped 되면 `currentBranch`는 기존 branch에 남고, 응답에 실패 또는 skip 사유가 표시됩니다.
+
+### Manifest concurrency와 해시 검증
+
+manifest는 `manifestSequence`를 사용해 optimistic concurrency를 수행합니다. commit 또는 merge 중에는 commit/snapshot/diff 객체를 업로드하기 직전에 현재 manifest sequence를 다시 확인합니다. 이 재확인은 conflict가 이미 보이는 경우 orphan commit object 생성을 줄이기 위한 best-effort guard입니다.
+
+최종 권위 있는 guard는 manifest 저장 시점의 `expectedSequence` 확인입니다. 다른 명령이 먼저 manifest를 갱신했다면 DGit은 `Repository changed while this command was running. Reload and retry.` 오류를 반환하고 재시도를 요구합니다.
+
+현재 manifest 메시지는 `sha256` 라인을 포함합니다. manifest 첨부 파일을 읽을 때 이 해시가 맞지 않으면 검증 실패로 처리합니다. 오래된 manifest처럼 `sha256` 라인이 없는 경우에는 legacy/unverified 상태로 표시됩니다.
+
+### Verify/repair 복구 흐름
+
+운영 중 저장소 상태가 의심되면 먼저 `/dgit verify`를 실행합니다. verify는 저장소 채널 탐색, manifest schema, manifest hash, branch head, commit/snapshot/diff 첨부 파일을 확인합니다.
+
+권장 복구 순서는 다음과 같습니다.
+
+1. `/dgit verify`로 실패 지점을 확인합니다.
+2. 저장소 채널 권한과 pin 상태를 확인합니다. 저장소 채널은 bot이 읽고 쓸 수 있어야 하며, 현재 manifest 메시지가 pin 되어 있어야 합니다.
+3. manifest가 손상되었거나 commit index가 맞지 않으면 `/dgit-repo repair`를 실행합니다.
+4. repair는 저장소 채널의 `[DGIT:COMMIT:<hash>]` 메시지를 다시 스캔해 manifest commit index를 재구성합니다.
+5. repair 후 `/dgit verify`를 다시 실행해 branch head와 첨부 파일 검증 결과를 확인합니다.
+6. live server와 HEAD 차이가 남아 있으면 `/dgit status`와 `/dgit diff`로 working tree 상태를 확인한 뒤 필요한 경우 새 commit 또는 restore를 수행합니다.
+
+repair는 저장소 채널에 남아 있는 commit/snapshot/diff 첨부 파일을 기준으로 manifest를 재구성합니다. Discord 메시지나 첨부 파일 자체가 삭제된 commit은 복구할 수 없습니다.
+
+### 수동 Discord 테스트 체크리스트
+
+릴리스 전 실제 Discord 개발 서버에서 다음 흐름을 한 번씩 확인합니다.
+
+- `/dgit init channel:#dgit-repository`가 비공개 저장소 채널에서 성공하는지 확인합니다.
+- `@everyone`에게 저장소 채널 `View Channel`, `Send Messages`, `Attach Files` 중 하나를 열어 둔 상태에서 `/dgit init`이 실패하는지 확인합니다.
+- `/dgit check-permission` 출력이 bot guild 권한과 저장소 채널 권한을 구분해서 보여주는지 확인합니다.
+- `/dgit status`, `/dgit diff`, `/dgit commit message:"..."`, `/dgit log` 기본 흐름을 확인합니다.
+- `/dgit restore commit:<hash>`가 dry-run을 먼저 보여주고, dangerous plan이면 `RESTORE` typed modal 없이는 적용되지 않는지 확인합니다.
+- `/dgit-branch apply branch:<name>`와 `/dgit-admin maintenance on|off`가 dangerous plan에서 `APPLY` typed modal을 요구하는지 확인합니다.
+- restore/apply/maintenance 직전 live state가 HEAD와 다를 때 `Safety backup before ...` 커밋이 생성되는지 확인합니다.
+- `/dgit-branch checkout branch:<name>`에서 적용 성공 후에만 current branch가 변경되는지 확인합니다.
+- managed role, bot보다 높은 role, 저장소 채널 변경이 skipped로 보고되는지 확인합니다.
+- `/dgit verify`가 정상 저장소에서 성공 항목을 표시하는지 확인합니다.
+- manifest 또는 commit index 복구가 필요한 상황에서 `/dgit-repo repair` 후 `/dgit verify`를 다시 실행해 복구 상태를 확인합니다.
+
 ## 주요 명령
 
 - `/dgit init channel:#dgit-repository`

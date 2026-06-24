@@ -148,9 +148,9 @@ export class DGitService {
     return { manifest, repository, target, plan: this.applier.planApply(current, target) };
   }
 
-  async applyRestorePlan(guild: Guild, plan: ApplyPlan, repositoryChannelId: string, authorId: string): Promise<ReturnType<GuildStateApplier["applyPlan"]>> {
+  async applyRestorePlan(guild: Guild, plan: ApplyPlan, repositoryChannelId: string, authorId: string, backupReason?: string): Promise<ReturnType<GuildStateApplier["applyPlan"]>> {
     const targetHash = plan.targetSnapshot?.stateHash ? shortHash(plan.targetSnapshot.stateHash) : "unknown";
-    await this.createSafetyBackupIfDirty(guild, authorId, `restore ${targetHash}`);
+    await this.createSafetyBackupIfDirty(guild, authorId, backupReason ?? `restore ${targetHash}`);
     return this.applier.applyPlan(guild, plan, { repositoryChannelId });
   }
 

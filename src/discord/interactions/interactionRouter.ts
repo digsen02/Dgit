@@ -26,8 +26,18 @@ export function hasManageGuildPermission(permissions: { has(permission: bigint):
   return Boolean(permissions?.has(PermissionFlagsBits.Administrator) || permissions?.has(PermissionFlagsBits.ManageGuild));
 }
 
+type PendingRestore = {
+  guildId: string;
+  userId: string;
+  repositoryChannelId: string;
+  plan: ApplyPlan;
+  expiresAt: number;
+  confirmationWord: string;
+  backupReason: string;
+};
+
 export class InteractionRouter {
-  private readonly pendingRestores = new Map<string, { guildId: string; userId: string; repositoryChannelId: string; plan: ApplyPlan; expiresAt: number; confirmationWord: "RESTORE" | "APPLY" }>();
+  private readonly pendingRestores = new Map<string, PendingRestore>();
 
   constructor(private readonly service = new DGitService(), private readonly confirms = new ConfirmRouter()) {}
 
@@ -111,12 +121,12 @@ export class InteractionRouter {
       if (pending!.plan.dangerousCount > 0) {
         const modal = new ModalBuilder()
           .setCustomId(`dgit:restore-typed:${token}`)
-          .setTitle(`Type ${pending!.confirmationWord} to confirm`)
+          .setTitle(t(interaction.locale, "dangerousConfirmationModalTitle", { word: pending!.confirmationWord }))
           .addComponents(
             new ActionRowBuilder<TextInputBuilder>().addComponents(
               new TextInputBuilder()
                 .setCustomId("confirmation")
-                .setLabel(`Type ${pending!.confirmationWord}`)
+                .setLabel(t(interaction.locale, "dangerousConfirmationModalLabel", { word: pending!.confirmationWord }))
                 .setStyle(TextInputStyle.Short)
                 .setRequired(true)
                 .setMaxLength(16)
@@ -136,9 +146,9 @@ export class InteractionRouter {
       const token = interaction.customId.replace("dgit:restore-typed:", "");
       const pending = this.pendingRestores.get(token);
       if (!(await this.validatePendingRestore(interaction, token, pending))) return;
-      const value = interaction.fields.getTextInputValue("confirmation").trim().toUpperCase();
-      if (value !== pending!.confirmationWord) {
-        await interaction.reply({ ephemeral: true, content: `Confirmation did not match ${pending!.confirmationWord}.` });
+      const value = interaction.fields.getTextInputValue("confirmation").trim();
+      if (value.toUpperCase() !== pending!.confirmationWord.toUpperCase()) {
+        await interaction.reply({ ephemeral: true, content: t(interaction.locale, "dangerousConfirmationMismatch", { word: pending!.confirmationWord }) });
         return;
       }
       await this.executePendingRestore(interaction, token, pending!);
@@ -169,7 +179,7 @@ export class InteractionRouter {
   private async validatePendingRestore(
     interaction: ButtonInteraction | ModalSubmitInteraction,
     token: string,
-    pending: { guildId: string; userId: string; repositoryChannelId: string; plan: ApplyPlan; expiresAt: number; confirmationWord: "RESTORE" | "APPLY" } | undefined
+    pending: PendingRestore | undefined
   ): Promise<boolean> {
     if (!pending || pending.expiresAt < Date.now()) {
       this.pendingRestores.delete(token);
@@ -192,7 +202,7 @@ export class InteractionRouter {
   private async executePendingRestore(
     interaction: ButtonInteraction | ModalSubmitInteraction,
     token: string,
-    pending: { guildId: string; userId: string; repositoryChannelId: string; plan: ApplyPlan; expiresAt: number; confirmationWord: "RESTORE" | "APPLY" }
+    pending: PendingRestore
   ): Promise<void> {
     if (!interaction.guild) {
       await interaction.reply({ ephemeral: true, content: t(interaction.locale, "guildOnly") });
@@ -200,7 +210,7 @@ export class InteractionRouter {
     }
     await interaction.deferReply({ ephemeral: true });
     try {
-      const result = await this.service.applyRestorePlan(interaction.guild, pending.plan, pending.repositoryChannelId, interaction.user.id);
+      const result = await this.service.applyRestorePlan(interaction.guild, pending.plan, pending.repositoryChannelId, interaction.user.id, pending.backupReason);
       this.pendingRestores.delete(token);
       await interaction.editReply(t(interaction.locale, "restoreFinished", {
         success: result.success.length,
@@ -267,7 +277,15 @@ export class InteractionRouter {
       const commit = interaction.options.getString("commit", true);
       const { plan, repository } = await this.service.restorePlan(interaction.guild!, commit);
       const token = `${interaction.id}-${Date.now().toString(36)}`;
-      this.pendingRestores.set(token, { guildId: interaction.guild!.id, userId: interaction.user.id, repositoryChannelId: repository.id, plan, expiresAt: Date.now() + 5 * 60_000, confirmationWord: "RESTORE" });
+      this.pendingRestores.set(token, {
+        guildId: interaction.guild!.id,
+        userId: interaction.user.id,
+        repositoryChannelId: repository.id,
+        plan,
+        expiresAt: Date.now() + 5 * 60_000,
+        confirmationWord: t(interaction.locale, "dangerousConfirmationRestoreWord"),
+        backupReason: this.backupReason("restore", plan)
+      });
       const lines = plan.steps.slice(0, 20).map((step) => `${step.dangerous ? "!" : "-"} ${step.description}`);
       const embed = new EmbedBuilder()
         .setTitle(t(interaction.locale, "restoreDryRunTitle"))
@@ -341,7 +359,15 @@ export class InteractionRouter {
       const branch = interaction.options.getString("branch", true);
       const { plan, repository } = await this.service.branchApplyPlan(interaction.guild!, branch);
       const token = `${interaction.id}-${Date.now().toString(36)}`;
-      this.pendingRestores.set(token, { guildId: interaction.guild!.id, userId: interaction.user.id, repositoryChannelId: repository.id, plan, expiresAt: Date.now() + 5 * 60_000, confirmationWord: "APPLY" });
+      this.pendingRestores.set(token, {
+        guildId: interaction.guild!.id,
+        userId: interaction.user.id,
+        repositoryChannelId: repository.id,
+        plan,
+        expiresAt: Date.now() + 5 * 60_000,
+        confirmationWord: t(interaction.locale, "dangerousConfirmationApplyWord"),
+        backupReason: this.backupReason(`branch apply ${branch}`, plan)
+      });
       const lines = plan.steps.slice(0, 20).map((step) => `${step.dangerous ? "!" : "-"} ${step.description}`);
       const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder().setCustomId(`dgit:restore-confirm:${token}`).setLabel(t(interaction.locale, "confirmRestore")).setStyle(ButtonStyle.Danger),
@@ -447,7 +473,15 @@ export class InteractionRouter {
     if (group === "maintenance" && sub === "on") {
       const { plan, repository } = await this.service.maintenancePlan(interaction.guild!);
       const token = `${interaction.id}-${Date.now().toString(36)}`;
-      this.pendingRestores.set(token, { guildId: interaction.guild!.id, userId: interaction.user.id, repositoryChannelId: repository.id, plan, expiresAt: Date.now() + 5 * 60_000, confirmationWord: "APPLY" });
+      this.pendingRestores.set(token, {
+        guildId: interaction.guild!.id,
+        userId: interaction.user.id,
+        repositoryChannelId: repository.id,
+        plan,
+        expiresAt: Date.now() + 5 * 60_000,
+        confirmationWord: t(interaction.locale, "dangerousConfirmationApplyWord"),
+        backupReason: this.backupReason("maintenance on", plan)
+      });
       const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder().setCustomId(`dgit:restore-confirm:${token}`).setLabel(t(interaction.locale, "confirmRestore")).setStyle(ButtonStyle.Danger),
         new ButtonBuilder().setCustomId(`dgit:restore-cancel:${token}`).setLabel(t(interaction.locale, "cancel")).setStyle(ButtonStyle.Secondary)
@@ -462,7 +496,15 @@ export class InteractionRouter {
     if (group === "maintenance" && sub === "off") {
       const { plan, repository, manifest } = await this.service.maintenanceOffPlan(interaction.guild!);
       const token = `${interaction.id}-${Date.now().toString(36)}`;
-      this.pendingRestores.set(token, { guildId: interaction.guild!.id, userId: interaction.user.id, repositoryChannelId: repository.id, plan, expiresAt: Date.now() + 5 * 60_000, confirmationWord: "APPLY" });
+      this.pendingRestores.set(token, {
+        guildId: interaction.guild!.id,
+        userId: interaction.user.id,
+        repositoryChannelId: repository.id,
+        plan,
+        expiresAt: Date.now() + 5 * 60_000,
+        confirmationWord: t(interaction.locale, "dangerousConfirmationApplyWord"),
+        backupReason: this.backupReason("maintenance off", plan)
+      });
       const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder().setCustomId(`dgit:restore-confirm:${token}`).setLabel(t(interaction.locale, "confirmRestore")).setStyle(ButtonStyle.Danger),
         new ButtonBuilder().setCustomId(`dgit:restore-cancel:${token}`).setLabel(t(interaction.locale, "cancel")).setStyle(ButtonStyle.Secondary)
@@ -501,6 +543,11 @@ export class InteractionRouter {
 
   private formatStatus(locale: string, branch: string, head: string | null, clean: boolean, summary: string): string {
     return `${t(locale, "statusTitle")}\n${t(locale, "branch")}: ${branch}\n${t(locale, "head")}: ${head ? shortHash(head) : t(locale, "none")}\n${t(locale, "workingTree")}: ${clean ? t(locale, "clean") : t(locale, "dirty")}\n${t(locale, "changes")}: ${summary}`;
+  }
+
+  private backupReason(label: string, plan: ApplyPlan): string {
+    const targetHash = plan.targetSnapshot?.stateHash ? ` ${shortHash(plan.targetSnapshot.stateHash)}` : "";
+    return `${label}${targetHash}`;
   }
 
   private statusButtons(locale: string, changeCount: number, clean: boolean): ActionRowBuilder<ButtonBuilder> {
