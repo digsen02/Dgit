@@ -5,6 +5,21 @@ import { manifestSchema } from "../schemas/manifest.schema.js";
 import { commitSchema } from "../schemas/commit.schema.js";
 import { snapshotSchema } from "../schemas/snapshot.schema.js";
 import { diffSchema } from "../schemas/diff.schema.js";
+import { LocalizedError } from "../../i18n/localizedError.js";
+
+export interface ManifestIntegrity {
+  found: boolean;
+  hashVerified: boolean;
+  legacyUnverified: boolean;
+  expectedSha256: string | null;
+}
+
+export function parseManifestMessageSha256(content: string): string | null {
+  const line = content.split(/\r?\n/).find((item) => item.toLowerCase().startsWith("sha256:"));
+  if (!line) return null;
+  const value = line.slice("sha256:".length).trim();
+  return value.startsWith("sha256:") ? value : `sha256:${value}`;
+}
 
 export class DiscordRepositoryStorage {
   constructor(private readonly store = new ChunkedAttachmentStore()) {}
@@ -15,30 +30,57 @@ export class DiscordRepositoryStorage {
   }
 
   async loadManifest(channel: TextChannel): Promise<DGitManifest> {
+    return (await this.loadManifestWithIntegrity(channel)).manifest;
+  }
+
+  async loadManifestWithIntegrity(channel: TextChannel): Promise<{ manifest: DGitManifest; integrity: ManifestIntegrity }> {
     const message = await this.findManifestMessage(channel);
     if (!message) throw new Error("No pinned current DGit manifest found.");
     const attachment = message.attachments.find((a) => a.name === "manifest.json.gz");
     if (!attachment) throw new Error("Pinned manifest message has no manifest.json.gz attachment.");
-    const value = await this.readAttachmentJson(message, attachment);
-    return manifestSchema.parse(value) as DGitManifest;
+    const expectedSha256 = parseManifestMessageSha256(message.content);
+    const value = await this.readAttachmentJson(message, attachment, expectedSha256);
+    return {
+      manifest: manifestSchema.parse(value) as DGitManifest,
+      integrity: {
+        found: true,
+        hashVerified: Boolean(expectedSha256),
+        legacyUnverified: !expectedSha256,
+        expectedSha256
+      }
+    };
   }
 
   private async readAttachmentJson(
     message: Message,
-    attachment: { url: string; name?: string | null; size: number; contentType?: string | null }
+    attachment: { url: string; name?: string | null; size: number; contentType?: string | null },
+    expectedSha256?: string | null
   ): Promise<unknown> {
-    const meta = this.metaFromAttachment(message.channelId, message.id, attachment.name ?? "manifest.json.gz", attachment.size, "sha256:unknown", attachment.contentType);
+    const sha256 = expectedSha256 ?? "sha256:unknown";
+    const meta = this.metaFromAttachment(message.channelId, message.id, attachment.name ?? "manifest.json.gz", attachment.size, sha256, attachment.contentType);
     try {
-      return await this.store.readJson<unknown>(message, { ...meta, sha256: "sha256:unknown" });
+      return await this.store.readJson<unknown>(message, meta);
     } catch {
+      if (expectedSha256) throw new Error("Manifest hash verification failed.");
       const buffer = Buffer.from(await (await fetch(attachment.url)).arrayBuffer());
       return new (await import("./AttachmentCodec.js")).AttachmentCodec().decodeJson<unknown>(buffer);
     }
   }
 
-  async uploadManifest(channel: TextChannel, manifest: DGitManifest): Promise<AttachmentMeta> {
+  async uploadManifest(channel: TextChannel, manifest: DGitManifest, expectedSequence?: number): Promise<AttachmentMeta> {
     const old = await this.findManifestMessage(channel).catch(() => null);
-    const meta = await this.store.uploadJson(channel, `[DGIT:MANIFEST:CURRENT]\nsequence: ${manifest.manifestSequence}`, "manifest.json.gz", manifest, manifest.settings.maxAttachmentBytes);
+    if (expectedSequence !== undefined) {
+      if (!old) throw new LocalizedError("repositoryChangedRetry");
+      const current = await this.loadManifest(channel);
+      if (current.manifestSequence !== expectedSequence) throw new LocalizedError("repositoryChangedRetry");
+    }
+    const meta = await this.store.uploadJson(
+      channel,
+      (encoded) => `[DGIT:MANIFEST:CURRENT]\nsequence: ${manifest.manifestSequence}\nsha256: ${encoded.sha256}`,
+      "manifest.json.gz",
+      manifest,
+      manifest.settings.maxAttachmentBytes
+    );
     const fresh = await channel.messages.fetch(meta.messageId);
     await fresh.pin("DGit current manifest").catch(() => undefined);
     if (old) {

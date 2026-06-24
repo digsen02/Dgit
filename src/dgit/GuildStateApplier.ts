@@ -22,11 +22,15 @@ export class GuildStateApplier {
       const payload = step.payload as ApplyPayload | undefined;
       if (payload) payload.targetSnapshot = targetSnapshot;
     }
+    const dangerousCount = diff.summary.dangerous;
+    const warnings = ["This plan will create, update, move, overwrite permissions, and delete Discord roles/channels after confirmation."];
+    if (dangerousCount > 0) warnings.push("Dangerous changes detected. Review the preview carefully before confirming.");
+    warnings.push("TODO: create an automatic safety backup commit before applying restore/branch/maintenance changes.");
     return {
       changes: diff.changes,
       steps: this.orderSteps(steps),
-      dangerousCount: diff.summary.dangerous,
-      warnings: ["This plan will create, update, move, overwrite permissions, and delete Discord roles/channels after confirmation."],
+      dangerousCount,
+      warnings,
       targetSnapshot
     };
   }
@@ -38,11 +42,9 @@ export class GuildStateApplier {
     const roleMap = new Map<string, string>();
     const channelMap = new Map<string, string>();
     for (const step of plan.steps) {
-      const payload = step.payload as ApplyPayload | undefined;
-      const before = payload?.before as { discordId?: string } | null | undefined;
-      const after = payload?.after as { discordId?: string } | null | undefined;
-      if (step.objectType === "channel" && [step.internalId, before?.discordId, after?.discordId].includes(options.repositoryChannelId) && step.action.startsWith("delete")) {
-        result.skipped.push({ step, reason: "Repository channel is protected." });
+      const skipReason = this.skipReason(guild, step, roleMap, channelMap, options);
+      if (skipReason) {
+        result.skipped.push({ step, reason: skipReason });
         continue;
       }
       try {
@@ -81,6 +83,8 @@ export class GuildStateApplier {
       const role = this.findRole(guild, before, roleMap);
       if (!role) return;
       if (role.id === guild.members.me?.roles.highest.id) throw new Error("Refusing to delete the bot's highest role.");
+      if (role.managed) throw new Error(`Cannot delete managed role ${role.name}.`);
+      if (this.isRoleAtOrAboveBot(role, guild)) throw new Error(`Cannot delete role ${role.name} at or above the bot's highest role.`);
       await role.delete("DGit checkout/delete role");
       return;
     }
@@ -103,6 +107,7 @@ export class GuildStateApplier {
       roleMap.set(after.internalId, role.id);
     }
     if (role.managed) throw new Error(`Cannot edit managed role ${role.name}.`);
+    if (this.isRoleAtOrAboveBot(role, guild)) throw new Error(`Cannot edit role ${role.name} at or above the bot's highest role.`);
     await role.edit({
       name: after.name,
       color: after.color,
@@ -126,6 +131,7 @@ export class GuildStateApplier {
       return;
     }
     if (!after) throw new Error("Missing channel target payload.");
+    if (after.discordId === options.repositoryChannelId) throw new Error("Refusing to modify repository channel.");
     let channel = this.findChannel(guild, after, channelMap);
     if (!channel) {
       channel = await this.createChannel(guild, after, roleMap, channelMap, payload?.targetSnapshot);
@@ -204,6 +210,31 @@ export class GuildStateApplier {
       description: change.humanSummary,
       payload: { before: change.before, after: change.after, path: change.path }
     };
+  }
+
+  private skipReason(guild: Guild, step: ApplyStep, roleMap: Map<string, string>, channelMap: Map<string, string>, options: { repositoryChannelId: string }): string | null {
+    const payload = step.payload as ApplyPayload | undefined;
+    const before = payload?.before as { discordId?: string; internalId?: string; managed?: boolean; name?: string } | null | undefined;
+    const after = payload?.after as { discordId?: string; internalId?: string; managed?: boolean; name?: string } | null | undefined;
+    if (step.objectType === "channel" && this.referencesRepositoryChannel(step, before, after, options.repositoryChannelId)) {
+      return "Repository channel is protected.";
+    }
+    if (step.objectType !== "role") return null;
+    if (before?.managed || after?.managed) return `Managed role ${after?.name ?? before?.name ?? step.internalId} is protected.`;
+    const snapshot = (after ?? before) as RoleSnapshot | undefined;
+    const role = snapshot ? this.findRole(guild, snapshot, roleMap) : null;
+    if (role && this.isRoleAtOrAboveBot(role, guild)) return `Role ${role.name} is at or above the bot's highest role.`;
+    return null;
+  }
+
+  private referencesRepositoryChannel(step: ApplyStep, before: { discordId?: string; internalId?: string } | null | undefined, after: { discordId?: string; internalId?: string } | null | undefined, repositoryChannelId: string): boolean {
+    return [step.internalId, before?.discordId, after?.discordId].includes(repositoryChannelId);
+  }
+
+  private isRoleAtOrAboveBot(role: Role, guild: Guild): boolean {
+    const highest = guild.members.me?.roles.highest;
+    if (!highest) return false;
+    return role.id !== guild.id && role.id !== highest.id && role.position >= highest.position;
   }
 
   private orderSteps(steps: ApplyStep[]): ApplyStep[] {

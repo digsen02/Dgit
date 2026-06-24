@@ -17,6 +17,12 @@ describe("hash and codec", () => {
     await expect(codec.decodeJson(encoded.data, encoded.sha256)).resolves.toEqual({ ok: true });
   });
 
+  it("rejects attachment data with the wrong sha", async () => {
+    const codec = new AttachmentCodec();
+    const encoded = await codec.encodeJson({ ok: true }, "x.json.gz");
+    await expect(codec.decodeJson(encoded.data, "sha256:wrong")).rejects.toThrow(/hash mismatch/);
+  });
+
   it("splits and joins chunks", async () => {
     const codec = new AttachmentCodec();
     const encoded = await codec.encodeJson({ text: "x".repeat(1000) }, "x.json.gz");

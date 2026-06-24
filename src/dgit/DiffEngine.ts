@@ -83,6 +83,7 @@ export class DiffEngine {
   private severity(objectType: string, internalId: string, path: string, before: unknown, after: unknown): Severity {
     if (objectType === "role" && internalId === "role_everyone" && path === "permissions") return "dangerous";
     if (path === "permissions" && Array.isArray(before) && before.includes("Administrator") && Array.isArray(after) && !after.includes("Administrator")) return "dangerous";
+    if (path === "permissionOverwrites" && (this.hasEveryoneOverwrite(before) || this.hasEveryoneOverwrite(after))) return "dangerous";
     if (path === "permissionOverwrites") return "high";
     if (path === "position" || path === "parentInternalId") return "medium";
     return "low";
@@ -94,5 +95,13 @@ export class DiffEngine {
 
   private same(a: unknown, b: unknown): boolean {
     return JSON.stringify(a) === JSON.stringify(b);
+  }
+
+  private hasEveryoneOverwrite(value: unknown): boolean {
+    return Array.isArray(value) && value.some((overwrite) => {
+      if (!overwrite || typeof overwrite !== "object") return false;
+      const item = overwrite as { targetInternalId?: string };
+      return item.targetInternalId === "role_everyone";
+    });
   }
 }

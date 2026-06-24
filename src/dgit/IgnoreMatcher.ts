@@ -5,8 +5,8 @@ export class IgnoreMatcher {
 
   apply(snapshot: DGitSnapshot): DGitSnapshot {
     const copy: DGitSnapshot = structuredClone(snapshot);
-    copy.channels = copy.channels.filter((channel) => !this.isIgnoredChannel(channel.discordId, channel.name));
-    copy.roles = copy.roles.filter((role) => !this.isIgnoredRole(role.discordId, role.name));
+    copy.channels = this.ignoresType("channel") ? [] : copy.channels.filter((channel) => !this.isIgnoredChannel(channel.discordId, channel.name));
+    copy.roles = this.ignoresType("role") ? [] : copy.roles.filter((role) => !this.isIgnoredRole(role.discordId, role.name));
     return copy;
   }
 

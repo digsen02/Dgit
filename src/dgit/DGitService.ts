@@ -86,7 +86,7 @@ export class DGitService {
     if (manifest.commits[commit.hash]) throw new LocalizedError("commitHashCollision");
     const files = await this.storage.uploadCommitObjects(repository, commit, live, diff, manifest.settings.maxAttachmentBytes);
     const updated = this.manifests.addCommit(manifest, this.entryFrom(commit, diff, files));
-    await this.storage.uploadManifest(repository, updated);
+    await this.storage.uploadManifest(repository, updated, manifest.manifestSequence);
     return { commit, diff, manifest: updated };
   }
 
@@ -110,8 +110,15 @@ export class DGitService {
   }
 
   async verify(guild: Guild, locale: string): Promise<string[]> {
-    const { repository, manifest } = await this.loadRepo(guild);
-    const rows = [t(locale, "verifyRepositoryLocated"), t(locale, "verifyManifestLoaded")];
+    const repository = await this.locator.locate(guild);
+    if (!repository) throw new LocalizedError("repositoryNotFound");
+    const { manifest, integrity } = await this.storage.loadManifestWithIntegrity(repository);
+    this.manifests.validate(manifest);
+    const rows = [
+      t(locale, "verifyRepositoryLocated"),
+      t(locale, "verifyManifestLoaded"),
+      integrity.hashVerified ? t(locale, "verifyManifestHashVerified") : t(locale, "verifyManifestLegacyUnverified")
+    ];
     for (const [branch, data] of Object.entries(manifest.branches)) {
       rows.push(data.head && manifest.commits[data.head]
         ? t(locale, "verifyBranchHeadExists", { branch })
@@ -364,7 +371,11 @@ export class DGitService {
   async repoRepair(guild: Guild, authorId: string): Promise<{ manifest: DGitManifest; scanned: number; commits: number }> {
     const repository = await this.locator.locate(guild);
     if (!repository) throw new LocalizedError("repositoryNotFound");
-    const previous = await this.storage.loadManifest(repository).catch(() => this.manifests.createInitial(guild.id, authorId));
+    const loadedPrevious = await this.storage.loadManifest(repository).then((manifest) => ({ manifest, expectedSequence: manifest.manifestSequence })).catch(() => ({
+      manifest: this.manifests.createInitial(guild.id, authorId),
+      expectedSequence: undefined
+    }));
+    const previous = loadedPrevious.manifest;
     const messages = await this.fetchRepositoryMessages(repository);
     const commits: ManifestCommitEntry[] = [];
     for (const message of messages) {
@@ -407,7 +418,7 @@ export class DGitService {
       if (newest && !copy.branches[copy.defaultBranch]?.head) copy.branches[copy.defaultBranch]!.head = newest.hash;
       copy.head = copy.branches[copy.currentBranch]?.head ?? null;
     });
-    const saved = await this.saveManifest(repository, repaired);
+    const saved = await this.saveManifest(repository, repaired, loadedPrevious.expectedSequence);
     return { manifest: saved, scanned: messages.length, commits: commits.length };
   }
 
@@ -445,9 +456,9 @@ export class DGitService {
     return copy;
   }
 
-  private async saveManifest(repository: TextChannel, manifest: DGitManifest): Promise<DGitManifest> {
+  private async saveManifest(repository: TextChannel, manifest: DGitManifest, expectedSequence = manifest.manifestSequence - 1): Promise<DGitManifest> {
     const valid = this.manifests.validate(manifest);
-    await this.storage.uploadManifest(repository, valid);
+    await this.storage.uploadManifest(repository, valid, expectedSequence);
     return valid;
   }
 
@@ -508,6 +519,7 @@ export class DGitService {
       message: input.message,
       authorId: input.authorId,
       createdAt,
+      snapshotHash,
       stateHash: input.snapshot.stateHash,
       diffHash
     };

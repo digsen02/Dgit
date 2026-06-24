@@ -20,6 +20,10 @@ import { ConfirmRouter } from "./confirmRouter.js";
 import { t } from "../../i18n/i18n.js";
 import { LocalizedError } from "../../i18n/localizedError.js";
 
+export function hasManageGuildPermission(permissions: { has(permission: bigint): boolean } | null | undefined): boolean {
+  return Boolean(permissions?.has(PermissionFlagsBits.Administrator) || permissions?.has(PermissionFlagsBits.ManageGuild));
+}
+
 export class InteractionRouter {
   private readonly pendingRestores = new Map<string, { guildId: string; userId: string; repositoryChannelId: string; plan: ApplyPlan; expiresAt: number }>();
 
@@ -73,6 +77,10 @@ export class InteractionRouter {
       return;
     }
     if (interaction.customId === "dgit:status-commit") {
+      if (!hasManageGuildPermission(interaction.memberPermissions)) {
+        await interaction.reply({ ephemeral: true, content: t(interaction.locale, "manageGuildRequired") });
+        return;
+      }
       const modal = new ModalBuilder()
         .setCustomId("dgit:commit-modal")
         .setTitle(t(interaction.locale, "commitModalTitle"))
@@ -132,6 +140,10 @@ export class InteractionRouter {
       await interaction.reply({ ephemeral: true, content: t(interaction.locale, "guildOnly") });
       return;
     }
+    if (!hasManageGuildPermission(interaction.memberPermissions)) {
+      await interaction.reply({ ephemeral: true, content: t(interaction.locale, "manageGuildRequired") });
+      return;
+    }
     await interaction.deferReply({ ephemeral: true });
     try {
       const message = interaction.fields.getTextInputValue("message");
@@ -168,6 +180,7 @@ export class InteractionRouter {
     }
     if (sub === "commit") {
       await interaction.deferReply({ ephemeral: true });
+      this.requireManageGuild(interaction);
       const message = interaction.options.getString("message", true);
       const result = await this.service.commit(interaction.guild!, interaction.user.id, message);
       await interaction.editReply(t(interaction.locale, "createdCommit", { hash: shortHash(result.commit.hash), branch: result.commit.branch, summary: formatSummary(result.diff.summary) }));
@@ -200,7 +213,11 @@ export class InteractionRouter {
       const embed = new EmbedBuilder()
         .setTitle(t(interaction.locale, "restoreDryRunTitle"))
         .setDescription(truncateDiscord(lines.join("\n") || t(interaction.locale, "noChanges")))
-        .addFields({ name: t(interaction.locale, "dangerousChanges"), value: String(plan.dangerousCount), inline: true }, { name: t(interaction.locale, "steps"), value: String(plan.steps.length), inline: true });
+        .addFields(
+          { name: t(interaction.locale, "dangerousChanges"), value: String(plan.dangerousCount), inline: true },
+          { name: t(interaction.locale, "steps"), value: String(plan.steps.length), inline: true },
+          { name: t(interaction.locale, "warnings", { warnings: "" }).trim() || "Warnings", value: truncateDiscord(plan.warnings.join("\n") || t(interaction.locale, "none")), inline: false }
+        );
       const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder().setCustomId(`dgit:restore-confirm:${token}`).setLabel(t(interaction.locale, "confirmRestore")).setStyle(ButtonStyle.Danger),
         new ButtonBuilder().setCustomId(`dgit:restore-cancel:${token}`).setLabel(t(interaction.locale, "cancel")).setStyle(ButtonStyle.Secondary)
@@ -223,6 +240,7 @@ export class InteractionRouter {
     await interaction.deferReply({ ephemeral: true });
     const sub = interaction.options.getSubcommand();
     if (sub === "create") {
+      this.requireManageGuild(interaction);
       const manifest = await this.service.branchCreate(interaction.guild!, interaction.options.getString("name", true), interaction.user.id, interaction.options.getString("from") ?? undefined);
       const name = interaction.options.getString("name", true);
       await interaction.editReply(t(interaction.locale, "createdBranch", { name, hash: manifest.branches[name]?.head ? shortHash(manifest.branches[name]!.head!) : t(interaction.locale, "none") }));
@@ -270,7 +288,7 @@ export class InteractionRouter {
         new ButtonBuilder().setCustomId(`dgit:restore-confirm:${token}`).setLabel(t(interaction.locale, "confirmRestore")).setStyle(ButtonStyle.Danger),
         new ButtonBuilder().setCustomId(`dgit:restore-cancel:${token}`).setLabel(t(interaction.locale, "cancel")).setStyle(ButtonStyle.Secondary)
       );
-      await interaction.editReply({ content: t(interaction.locale, "branchApplyPreview", { branch, dangerous: String(plan.dangerousCount), lines: truncateDiscord(lines.join("\n") || t(interaction.locale, "noChanges")) }), components: [row] });
+      await interaction.editReply({ content: t(interaction.locale, "branchApplyPreview", { branch, dangerous: String(plan.dangerousCount), lines: truncateDiscord(`${lines.join("\n") || t(interaction.locale, "noChanges")}\n\n${plan.warnings.join("\n")}`) }), components: [row] });
       return;
     }
     if (sub === "delete") {
@@ -303,6 +321,7 @@ export class InteractionRouter {
     await interaction.deferReply({ ephemeral: true });
     const sub = interaction.options.getSubcommand();
     if (sub === "create") {
+      this.requireManageGuild(interaction);
       const name = interaction.options.getString("name", true);
       const manifest = await this.service.tagCreate(interaction.guild!, name, interaction.options.getString("commit") ?? undefined);
       await interaction.editReply(t(interaction.locale, "createdTag", { name, hash: shortHash(manifest.tags[name]!) }));
@@ -315,7 +334,7 @@ export class InteractionRouter {
       return;
     }
     if (sub === "delete") {
-      this.requireAdmin(interaction);
+      this.requireManageGuild(interaction);
       const name = interaction.options.getString("name", true);
       await this.service.tagDelete(interaction.guild!, name);
       await interaction.editReply(t(interaction.locale, "deletedTag", { name }));
@@ -377,7 +396,7 @@ export class InteractionRouter {
       await interaction.editReply({ content: t(interaction.locale, "maintenancePreview", {
         steps: String(plan.steps.length),
         dangerous: String(plan.dangerousCount),
-        lines: truncateDiscord(plan.steps.slice(0, 20).map((step) => step.description).join("\n"))
+        lines: truncateDiscord(`${plan.steps.slice(0, 20).map((step) => step.description).join("\n")}\n\n${plan.warnings.join("\n")}`)
       }), components: [row] });
       return;
     }
@@ -392,7 +411,7 @@ export class InteractionRouter {
       await interaction.editReply({ content: t(interaction.locale, "branchApplyPreview", {
         branch: manifest.currentBranch,
         dangerous: String(plan.dangerousCount),
-        lines: truncateDiscord(plan.steps.slice(0, 20).map((step) => step.description).join("\n") || t(interaction.locale, "noChanges"))
+        lines: truncateDiscord(`${plan.steps.slice(0, 20).map((step) => step.description).join("\n") || t(interaction.locale, "noChanges")}\n\n${plan.warnings.join("\n")}`)
       }), components: [row] });
     }
   }
@@ -407,6 +426,7 @@ export class InteractionRouter {
     }
     const type = interaction.options.getString("type", true) as "channel" | "role" | "objectType" | "pattern";
     const value = interaction.options.getString("value", true);
+    this.requireManageGuild(interaction);
     if (sub === "add") await this.service.addIgnore(interaction.guild!, type, value);
     if (sub === "remove") await this.service.removeIgnore(interaction.guild!, type, value);
     await interaction.editReply(`${t(interaction.locale, sub === "add" ? "added" : "removed")} ${t(interaction.locale, "ignoreRule", { type, value })}`);
@@ -414,6 +434,10 @@ export class InteractionRouter {
 
   private requireAdmin(interaction: ChatInputCommandInteraction): void {
     if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) throw new Error(t(interaction.locale, "adminRequired"));
+  }
+
+  private requireManageGuild(interaction: ChatInputCommandInteraction): void {
+    if (!hasManageGuildPermission(interaction.memberPermissions)) throw new Error(t(interaction.locale, "manageGuildRequired"));
   }
 
   private formatStatus(locale: string, branch: string, head: string | null, clean: boolean, summary: string): string {

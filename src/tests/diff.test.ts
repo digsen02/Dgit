@@ -25,6 +25,20 @@ describe("DiffEngine", () => {
     expect(diff.changes.some((c) => c.op === "permission_update")).toBe(true);
   });
 
+  it("treats @everyone channel overwrite changes as dangerous", () => {
+    const before = snapshot();
+    const after = snapshot({
+      channels: before.channels.map((channel) => ({
+        ...channel,
+        permissionOverwrites: [
+          { targetInternalId: "role_everyone", targetDiscordId: "guild1", targetType: "role", allow: ["SendMessages"], deny: [] }
+        ]
+      }))
+    });
+    const change = new DiffEngine().compute(before, after).changes.find((item) => item.path === "permissionOverwrites");
+    expect(change?.severity).toBe("dangerous");
+  });
+
   it("detects role position changes", () => {
     const before = snapshot();
     const after = snapshot({ roles: before.roles.map((r) => r.internalId === "role_mod" ? { ...r, position: 10 } : r) });

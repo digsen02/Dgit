@@ -2,6 +2,21 @@ import { ChannelType, Guild, PermissionFlagsBits, TextChannel } from "discord.js
 import { t } from "../../i18n/i18n.js";
 import { LocalizedError } from "../../i18n/localizedError.js";
 
+export interface RepositoryExposure {
+  everyoneCanView: boolean;
+  everyoneCanSend: boolean;
+  everyoneCanAttach: boolean;
+}
+
+export function repositoryExposure(channel: TextChannel): RepositoryExposure {
+  const permissions = channel.permissionsFor(channel.guild.roles.everyone);
+  return {
+    everyoneCanView: permissions?.has(PermissionFlagsBits.ViewChannel) ?? false,
+    everyoneCanSend: permissions?.has(PermissionFlagsBits.SendMessages) ?? false,
+    everyoneCanAttach: permissions?.has(PermissionFlagsBits.AttachFiles) ?? false
+  };
+}
+
 export class RepositoryLocator {
   async locate(guild: Guild): Promise<TextChannel | null> {
     await guild.channels.fetch();
@@ -18,8 +33,12 @@ export class RepositoryLocator {
     const me = channel.guild.members.me;
     if (!me) throw new LocalizedError("repositoryBotMemberUnavailable");
     const permissions = channel.permissionsFor(me);
-    if (!permissions?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles])) {
+    if (!permissions?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.ManageMessages])) {
       throw new LocalizedError("repositoryChannelPermissionsRequired");
+    }
+    const exposure = repositoryExposure(channel);
+    if (exposure.everyoneCanView || exposure.everyoneCanSend || exposure.everyoneCanAttach) {
+      throw new LocalizedError("repositoryChannelPubliclyAccessible");
     }
     let topicSet = false;
     if (permissions.has(PermissionFlagsBits.ManageChannels)) {

@@ -5,11 +5,12 @@ import { AttachmentCodec, type EncodedAttachment } from "./AttachmentCodec.js";
 export class ChunkedAttachmentStore {
   constructor(private readonly codec = new AttachmentCodec()) {}
 
-  async uploadJson(channel: TextChannel, label: string, filename: string, value: unknown, maxBytes: number): Promise<AttachmentMeta> {
+  async uploadJson(channel: TextChannel, label: string | ((encoded: EncodedAttachment) => string), filename: string, value: unknown, maxBytes: number): Promise<AttachmentMeta> {
     const encoded = await this.codec.encodeJson(value, filename);
     const chunks = this.codec.split(encoded, maxBytes);
     const files = chunks.map((chunk) => new AttachmentBuilder(chunk.data, { name: chunk.filename }));
-    const message = await channel.send({ content: label, files });
+    const content = typeof label === "function" ? label(encoded) : label;
+    const message = await channel.send({ content, files });
     if (chunks.length === 1) return this.metaFrom(message, chunks[0]!, encoded.sha256);
     const chunkMetas = chunks.map((chunk) => this.metaFrom(message, chunk, chunk.sha256));
     return {

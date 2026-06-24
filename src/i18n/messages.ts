@@ -47,6 +47,7 @@ export type MessageKey =
   | "removed"
   | "ignoreRule"
   | "adminRequired"
+  | "manageGuildRequired"
   | "inactiveConfirmation"
   | "emptyCommitMessage"
   | "workingTreeClean"
@@ -78,6 +79,8 @@ export type MessageKey =
   | "permissionAttachFiles"
   | "repositoryBotMemberUnavailable"
   | "repositoryChannelPermissionsRequired"
+  | "repositoryChannelPubliclyAccessible"
+  | "repositoryChangedRetry"
   | "repositoryDiscoveryWarning"
   | "permissionManageMessages"
   | "permissionManageChannels"
@@ -85,11 +88,19 @@ export type MessageKey =
   | "permissionManageGuild"
   | "permissionViewAuditLog"
   | "permissionRepositoryVisible"
+  | "permissionRepositorySendMessages"
+  | "permissionRepositoryReadHistory"
   | "permissionRepositoryAttachFiles"
+  | "permissionRepositoryManageMessages"
+  | "permissionRepositoryEveryoneView"
+  | "permissionRepositoryEveryoneSend"
+  | "permissionRepositoryEveryoneAttach"
   | "permissionBotRoleManaged"
   | "permissionBotRoleMovable"
   | "verifyRepositoryLocated"
   | "verifyManifestLoaded"
+  | "verifyManifestHashVerified"
+  | "verifyManifestLegacyUnverified"
   | "verifyBranchHeadExists"
   | "verifyBranchMissingHead"
   | "verifyBranchNoCommits"
@@ -155,6 +166,7 @@ export const messages: Record<SupportedLocale, Record<MessageKey, string>> = {
     removed: "삭제됨",
     ignoreRule: "ignore 규칙 {type}:{value}",
     adminRequired: "이 작업에는 관리자 권한이 필요합니다.",
+    manageGuildRequired: "이 작업에는 서버 관리 또는 관리자 권한이 필요합니다.",
     inactiveConfirmation: "이 확인 토큰은 더 이상 활성 상태가 아닙니다. 새 dry-run 미리보기를 생성하려면 명령을 다시 실행하세요.",
     emptyCommitMessage: "커밋 메시지는 비어 있을 수 없습니다.",
     workingTreeClean: "작업 트리가 깨끗합니다. 커밋이 생성되지 않았습니다.",
@@ -185,7 +197,9 @@ export const messages: Record<SupportedLocale, Record<MessageKey, string>> = {
     permissionReadMessageHistory: "메시지 기록 읽기",
     permissionAttachFiles: "파일 첨부",
     repositoryBotMemberUnavailable: "봇 길드 멤버 정보를 사용할 수 없습니다.",
-    repositoryChannelPermissionsRequired: "저장소 채널에 필요한 봇 권한이 없습니다: 채널 보기, 메시지 전송, 메시지 기록 읽기, 파일 첨부.",
+    repositoryChannelPermissionsRequired: "저장소 채널에 필요한 봇 권한이 없습니다: 채널 보기, 메시지 전송, 메시지 기록 읽기, 파일 첨부, 메시지 관리.",
+    repositoryChannelPubliclyAccessible: "저장소 채널은 @everyone에게 보이거나 쓰기 가능하면 안 됩니다. 채널 보기, 메시지 전송, 파일 첨부 권한을 비공개로 설정하세요.",
+    repositoryChangedRetry: "저장소가 다른 명령으로 변경되었습니다. 최신 상태에서 다시 시도하세요.",
     repositoryDiscoveryWarning: "Manage Channels 권한이 없으므로 채널 이름과 고정된 매니페스트에 따라 저장소를 검색합니다.",
     permissionManageMessages: "메시지 관리",
     permissionManageChannels: "채널 관리",
@@ -193,11 +207,19 @@ export const messages: Record<SupportedLocale, Record<MessageKey, string>> = {
     permissionManageGuild: "길드 관리",
     permissionViewAuditLog: "감사 로그 보기",
     permissionRepositoryVisible: "저장소 채널 표시 가능",
+    permissionRepositorySendMessages: "저장소 채널 메시지 전송",
+    permissionRepositoryReadHistory: "저장소 채널 메시지 기록 읽기",
     permissionRepositoryAttachFiles: "저장소 채널 파일 첨부",
+    permissionRepositoryManageMessages: "저장소 채널 메시지 관리",
+    permissionRepositoryEveryoneView: "@everyone 저장소 채널 보기 차단",
+    permissionRepositoryEveryoneSend: "@everyone 저장소 채널 메시지 전송 차단",
+    permissionRepositoryEveryoneAttach: "@everyone 저장소 채널 파일 첨부 차단",
     permissionBotRoleManaged: "봇 최고 역할이 관리되는 중입니다",
     permissionBotRoleMovable: "봇 최고 역할을 이동/관리할 수 있습니다",
     verifyRepositoryLocated: "[x] 저장소 채널 찾음",
     verifyManifestLoaded: "[x] 매니페스트 로드 및 스키마 유효성 검사 완료",
+    verifyManifestHashVerified: "[x] 현재 매니페스트 hash 검증 완료",
+    verifyManifestLegacyUnverified: "[ ] 현재 매니페스트에 sha256 라인이 없어 legacy/unverified 상태입니다",
     verifyBranchHeadExists: "[x] 브랜치 {branch}의 HEAD가 존재합니다",
     verifyBranchMissingHead: "[ ] 브랜치 {branch}의 HEAD가 없습니다",
     verifyBranchNoCommits: "[x] 브랜치 {branch}에 커밋이 없습니다",
@@ -262,6 +284,7 @@ export const messages: Record<SupportedLocale, Record<MessageKey, string>> = {
     removed: "Removed",
     ignoreRule: "ignore rule {type}:{value}",
     adminRequired: "Administrator permission is required for this operation.",
+    manageGuildRequired: "Manage Server or Administrator permission is required for this operation.",
     inactiveConfirmation: "This confirmation token is no longer active. Run the command again to generate a fresh dry-run preview.",
     emptyCommitMessage: "Commit message cannot be empty.",
     workingTreeClean: "Working tree clean. No commit created.",
@@ -292,7 +315,9 @@ export const messages: Record<SupportedLocale, Record<MessageKey, string>> = {
     permissionReadMessageHistory: "Read Message History",
     permissionAttachFiles: "Attach Files",
     repositoryBotMemberUnavailable: "Bot guild member is not available.",
-    repositoryChannelPermissionsRequired: "Repository channel is missing required bot permissions: View Channel, Send Messages, Read Message History, Attach Files.",
+    repositoryChannelPermissionsRequired: "Repository channel is missing required bot permissions: View Channel, Send Messages, Read Message History, Attach Files, Manage Messages.",
+    repositoryChannelPubliclyAccessible: "Repository channel must not be visible or writable by @everyone. Disable View Channel, Send Messages, and Attach Files for @everyone.",
+    repositoryChangedRetry: "Repository changed while this command was running. Reload and retry.",
     repositoryDiscoveryWarning: "Missing Manage Channels; repository discovery will rely on channel name and pinned manifest.",
     permissionManageMessages: "Manage Messages",
     permissionManageChannels: "Manage Channels",
@@ -300,11 +325,19 @@ export const messages: Record<SupportedLocale, Record<MessageKey, string>> = {
     permissionManageGuild: "Manage Guild",
     permissionViewAuditLog: "View Audit Log",
     permissionRepositoryVisible: "Repository channel visible",
+    permissionRepositorySendMessages: "Repository channel send messages",
+    permissionRepositoryReadHistory: "Repository channel read history",
     permissionRepositoryAttachFiles: "Repository channel attach files",
+    permissionRepositoryManageMessages: "Repository channel manage messages",
+    permissionRepositoryEveryoneView: "@everyone cannot view repository channel",
+    permissionRepositoryEveryoneSend: "@everyone cannot send repository messages",
+    permissionRepositoryEveryoneAttach: "@everyone cannot attach repository files",
     permissionBotRoleManaged: "Bot highest role is managed",
     permissionBotRoleMovable: "Bot highest role is movable/manageable",
     verifyRepositoryLocated: "[x] Repository channel located",
     verifyManifestLoaded: "[x] Manifest loaded and schema-valid",
+    verifyManifestHashVerified: "[x] Current manifest hash verified",
+    verifyManifestLegacyUnverified: "[ ] Current manifest is legacy/unverified because the sha256 line is missing",
     verifyBranchHeadExists: "[x] Branch {branch} head exists",
     verifyBranchMissingHead: "[ ] Branch {branch} missing head",
     verifyBranchNoCommits: "[x] Branch {branch} has no commits",
@@ -369,6 +402,7 @@ export const messages: Record<SupportedLocale, Record<MessageKey, string>> = {
     removed: "已移除",
     ignoreRule: "ignore 规则 {type}:{value}",
     adminRequired: "此操作需要管理员权限。",
+    manageGuildRequired: "此操作需要管理服务器或管理员权限。",
     inactiveConfirmation: "此确认令牌不再有效。请重新运行命令生成新的 dry-run 预览。",
     emptyCommitMessage: "提交信息不能为空。",
     workingTreeClean: "工作区已清理。未创建提交。",
@@ -399,7 +433,9 @@ export const messages: Record<SupportedLocale, Record<MessageKey, string>> = {
     permissionReadMessageHistory: "读取消息历史",
     permissionAttachFiles: "附加文件",
     repositoryBotMemberUnavailable: "机器人公会成员不可用。",
-    repositoryChannelPermissionsRequired: "仓库频道缺少所需的机器人权限：查看频道、发送消息、读取消息历史、附加文件。",
+    repositoryChannelPermissionsRequired: "仓库频道缺少所需的机器人权限：查看频道、发送消息、读取消息历史、附加文件、管理消息。",
+    repositoryChannelPubliclyAccessible: "仓库频道不能被 @everyone 查看或写入。请为 @everyone 禁用查看频道、发送消息和附加文件。",
+    repositoryChangedRetry: "仓库在命令运行期间已变更。请重新加载后重试。",
     repositoryDiscoveryWarning: "缺少管理频道权限；仓库发现将依赖频道名称和置顶的 manifest。",
     permissionManageMessages: "管理消息",
     permissionManageChannels: "管理频道",
@@ -407,11 +443,19 @@ export const messages: Record<SupportedLocale, Record<MessageKey, string>> = {
     permissionManageGuild: "管理服务器",
     permissionViewAuditLog: "查看审核日志",
     permissionRepositoryVisible: "仓库频道可见",
+    permissionRepositorySendMessages: "仓库频道可发送消息",
+    permissionRepositoryReadHistory: "仓库频道可读取历史",
     permissionRepositoryAttachFiles: "仓库频道可附加文件",
+    permissionRepositoryManageMessages: "仓库频道可管理消息",
+    permissionRepositoryEveryoneView: "@everyone 不能查看仓库频道",
+    permissionRepositoryEveryoneSend: "@everyone 不能发送仓库消息",
+    permissionRepositoryEveryoneAttach: "@everyone 不能附加仓库文件",
     permissionBotRoleManaged: "机器人最高角色受管理",
     permissionBotRoleMovable: "机器人最高角色可移动/管理",
     verifyRepositoryLocated: "[x] 找到仓库频道",
     verifyManifestLoaded: "[x] 已加载并验证 manifest 模式",
+    verifyManifestHashVerified: "[x] 当前 manifest hash 已验证",
+    verifyManifestLegacyUnverified: "[ ] 当前 manifest 缺少 sha256 行，处于 legacy/unverified 状态",
     verifyBranchHeadExists: "[x] 分支 {branch} 的 HEAD 存在",
     verifyBranchMissingHead: "[ ] 分支 {branch} 缺少 HEAD",
     verifyBranchNoCommits: "[x] 分支 {branch} 没有提交",

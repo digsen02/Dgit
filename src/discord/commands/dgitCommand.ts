@@ -1,4 +1,4 @@
-import { ChannelType, SlashCommandBuilder } from "discord.js";
+import { ChannelType, PermissionFlagsBits, SlashCommandBuilder } from "discord.js";
 import { commandLocalizations } from "../../i18n/i18n.js";
 
 function withDesc<T extends { setDescription(description: string): T; setDescriptionLocalizations(localizations: Record<string, string>): T }>(
@@ -17,6 +17,8 @@ export const dgitCommand = withDesc(
   "Discord-native Git-inspired guild version control",
   "Discord 原生的 Git 风格服务器版本控制"
 )
+  // This command mixes read-only subcommands with init/commit/restore. Runtime checks
+  // stay authoritative so status/log/diff/verify remain usable by normal members.
   .addSubcommand((sub) =>
     withDesc(sub.setName("init"), "저장소 채널을 초기화합니다", "Initialize a repository channel", "初始化仓库频道")
       .addChannelOption((opt) =>
@@ -53,6 +55,8 @@ export const dgitBranchCommand = withDesc(
   "Manage DGit branches",
   "管理 DGit 分支"
 )
+  // Branch list is read-only, while create/checkout/apply/delete mutate or apply state.
+  // Discord default permissions are therefore left open and enforced per subcommand.
   .addSubcommand((sub) =>
     withDesc(sub.setName("create"), "브랜치를 생성합니다", "Create a branch", "创建分支")
       .addStringOption((opt) => withDesc(opt.setName("name"), "브랜치 이름", "Branch name", "分支名称").setRequired(true))
@@ -78,6 +82,7 @@ export const dgitIgnoreCommand = withDesc(
   "Manage DGit ignore rules",
   "管理 DGit ignore 规则"
 )
+  // Ignore list is read-only; add/remove require Manage Guild at runtime.
   .addSubcommand((sub) =>
     withDesc(sub.setName("add"), "ignore 규칙을 추가합니다", "Add ignore rule", "添加 ignore 规则")
       .addStringOption((opt) =>
@@ -114,6 +119,7 @@ export const dgitMergeCommand = withDesc(
   "Merge DGit branches",
   "合并 DGit 分支"
 )
+  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addSubcommand((sub) =>
     withDesc(sub.setName("run"), "브랜치를 병합합니다", "Merge branches", "合并分支")
       .addStringOption((opt) => withDesc(opt.setName("from"), "소스 브랜치", "Source branch", "源分支").setRequired(true))
@@ -126,6 +132,7 @@ export const dgitTagCommand = withDesc(
   "Manage DGit tags",
   "管理 DGit 标签"
 )
+  // Tag list is read-only; create/delete require Manage Guild at runtime.
   .addSubcommand((sub) =>
     withDesc(sub.setName("create"), "태그를 생성합니다", "Create a tag", "创建标签")
       .addStringOption((opt) => withDesc(opt.setName("name"), "태그 이름", "Tag name", "标签名称").setRequired(true))
@@ -143,6 +150,7 @@ export const dgitRepoCommand = withDesc(
   "DGit repository tools",
   "DGit 仓库工具"
 )
+  // Repair is admin-only, but export/history/blame are read-only.
   .addSubcommand((sub) =>
     withDesc(sub.setName("repair"), "저장소 매니페스트를 복구합니다", "Repair repository manifest", "修复仓库 manifest")
   )
@@ -175,6 +183,7 @@ export const dgitAdminCommand = withDesc(
   "DGit admin tools",
   "DGit 管理工具"
 )
+  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addSubcommandGroup((group) =>
     withDesc(group.setName("watch"), "변경 감시 설정", "Watch settings", "监听设置")
       .addSubcommand((sub) => withDesc(sub.setName("enable"), "watch를 켭니다", "Enable watch", "启用监听"))
