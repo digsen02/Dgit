@@ -1,11 +1,13 @@
 import { Message, TextChannel } from "discord.js";
-import type { AttachmentMeta, DGitCommit, DGitDiff, DGitManifest, DGitSnapshot } from "../types/dgitTypes.js";
+import type { AttachmentMeta, DGitCommit, DGitDiff, DGitManifest, DGitMessageArchive, DGitSnapshot } from "../types/dgitTypes.js";
 import { ChunkedAttachmentStore } from "./ChunkedAttachmentStore.js";
 import { manifestSchema } from "../schemas/manifest.schema.js";
 import { commitSchema } from "../schemas/commit.schema.js";
 import { snapshotSchema } from "../schemas/snapshot.schema.js";
 import { diffSchema } from "../schemas/diff.schema.js";
+import { messageArchiveSchema } from "../schemas/messageArchive.schema.js";
 import { LocalizedError } from "../../i18n/localizedError.js";
+import { sha256Json, shortHash } from "../../utils/hash.js";
 
 export interface ManifestIntegrity {
   found: boolean;
@@ -90,16 +92,32 @@ export class DiscordRepositoryStorage {
     return meta;
   }
 
-  async uploadCommitObjects(channel: TextChannel, commit: DGitCommit, snapshot: DGitSnapshot, diff: DGitDiff, maxBytes: number): Promise<{ commitFile: AttachmentMeta; snapshotFile: AttachmentMeta; diffFile: AttachmentMeta }> {
+  async uploadCommitObjects(
+    channel: TextChannel,
+    commit: DGitCommit,
+    snapshot: DGitSnapshot,
+    diff: DGitDiff,
+    maxBytes: number,
+    messageArchive?: DGitMessageArchive | null
+  ): Promise<{ commitFile: AttachmentMeta; snapshotFile: AttachmentMeta; diffFile: AttachmentMeta; messageArchiveFile?: AttachmentMeta | null }> {
+    this.assertSnapshotHasNoMessageArchive(snapshot);
     const short = commit.hash.replace(/^sha256:/, "").slice(0, 12);
     const label = `[DGIT:COMMIT:${short}]\nbranch: ${commit.branch}\nauthor: <@${commit.authorId}>\nmessage: ${commit.message}\nchanges: +${diff.summary.added} ~${diff.summary.updated} -${diff.summary.deleted}\ndangerous: ${diff.summary.dangerous}`;
-    const [commitFile, snapshotFile, diffFile] = await this.store.uploadJsonMany(channel, label, [
-      { filename: `commit-${short}.json.gz`, value: commit },
+    const messageArchiveHash = messageArchive ? this.validateMessageArchive(commit, snapshot, messageArchive) : null;
+    const commitValue = messageArchiveHash ? { ...commit, messageArchiveHash } : commit;
+    const values: Array<{ filename: string; value: unknown }> = [
+      { filename: `commit-${short}.json.gz`, value: commitValue },
       { filename: `snapshot-${short}.json.gz`, value: snapshot },
       { filename: `diff-${short}.json.gz`, value: diff }
-    ], maxBytes);
+    ];
+    if (messageArchive) {
+      values.push({ filename: `message-archive-${shortHash(messageArchiveHash!)}.json.gz`, value: messageArchive });
+    }
+    const [commitFile, snapshotFile, diffFile, messageArchiveFile] = await this.store.uploadJsonMany(channel, label, values, maxBytes);
     if (!commitFile || !snapshotFile || !diffFile) throw new Error("Failed to build commit attachment metadata.");
-    return { commitFile, snapshotFile, diffFile };
+    return messageArchiveFile
+      ? { commitFile, snapshotFile, diffFile, messageArchiveFile }
+      : { commitFile, snapshotFile, diffFile };
   }
 
   async loadSnapshot(channel: TextChannel, meta: AttachmentMeta): Promise<DGitSnapshot> {
@@ -115,6 +133,35 @@ export class DiscordRepositoryStorage {
   async loadDiff(channel: TextChannel, meta: AttachmentMeta): Promise<DGitDiff> {
     const message = await channel.messages.fetch(meta.messageId);
     return diffSchema.parse(await this.store.readJson<unknown>(message, meta)) as DGitDiff;
+  }
+
+  async loadMessageArchive(channel: TextChannel, meta: AttachmentMeta): Promise<DGitMessageArchive> {
+    const message = await channel.messages.fetch(meta.messageId);
+    return messageArchiveSchema.parse(await this.store.readJson<unknown>(message, meta)) as DGitMessageArchive;
+  }
+
+  private assertSnapshotHasNoMessageArchive(snapshot: DGitSnapshot): void {
+    const raw = snapshot as unknown as Record<string, unknown>;
+    if ("messages" in raw || "messageArchive" in raw || "messageArchives" in raw) {
+      throw new Error("Message archive data must not be embedded directly inside DGitSnapshot.");
+    }
+  }
+
+  private validateMessageArchive(commit: DGitCommit, snapshot: DGitSnapshot, archive: DGitMessageArchive): string {
+    const parsed = messageArchiveSchema.parse(archive) as DGitMessageArchive;
+    if (parsed.guildId !== commit.guildId || parsed.guildId !== snapshot.guildId) {
+      throw new Error("Message archive guildId must match commit and snapshot guildId.");
+    }
+    if (parsed.commitHash !== commit.hash) throw new Error("Message archive commitHash must match commit hash.");
+    if (parsed.snapshotHash !== commit.snapshotHash) throw new Error("Message archive snapshotHash must match commit snapshotHash.");
+    if (parsed.stateHash !== commit.stateHash || parsed.stateHash !== snapshot.stateHash) {
+      throw new Error("Message archive stateHash must match commit and snapshot stateHash.");
+    }
+    const archiveHash = sha256Json(parsed);
+    if (commit.messageArchiveHash && commit.messageArchiveHash !== archiveHash) {
+      throw new Error("Commit messageArchiveHash must match message archive content hash.");
+    }
+    return archiveHash;
   }
 
   private metaFromAttachment(channelId: string, messageId: string, filename: string, sizeBytes: number, sha256: string, contentType?: string | null): AttachmentMeta {

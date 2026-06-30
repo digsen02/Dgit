@@ -9,8 +9,9 @@ import {
   PermissionOverwriteOptions,
   Role
 } from "discord.js";
-import type { ApplyPlan, ApplyResult, ApplyStep, ChannelSnapshot, DGitObjectType, DGitSnapshot, DiffChange, PermissionOverwriteSnapshot, RoleSnapshot } from "./types/dgitTypes.js";
+import type { ApplyPlan, ApplyResult, ApplyStep, AttachmentMeta, ChannelSnapshot, DGitObjectType, DGitSnapshot, DiffChange, MessageSnapshot, PermissionOverwriteSnapshot, RoleSnapshot } from "./types/dgitTypes.js";
 import { DiffEngine } from "./DiffEngine.js";
+import { truncateDiscord } from "../utils/text.js";
 
 export class GuildStateApplier {
   constructor(private readonly diffEngine = new DiffEngine()) {}
@@ -36,7 +37,15 @@ export class GuildStateApplier {
   }
 
   async applyPlan(guild: Guild, plan: ApplyPlan, options: { repositoryChannelId: string }): Promise<ApplyResult> {
-    const result: ApplyResult = { success: [], failed: [], skipped: [], warnings: [...plan.warnings] };
+    const result: ApplyResult = {
+      success: [],
+      failed: [],
+      skipped: [],
+      warnings: [
+        ...plan.warnings,
+        ...(plan.steps.some((step) => step.action === "render_message_record") ? ["Rerunning the same render plan can duplicate archived message output."] : [])
+      ]
+    };
     await guild.roles.fetch();
     await guild.channels.fetch();
     const roleMap = new Map<string, string>();
@@ -45,13 +54,16 @@ export class GuildStateApplier {
       const skipReason = this.skipReason(guild, step, roleMap, channelMap, options);
       if (skipReason) {
         result.skipped.push({ step, reason: skipReason });
+        if (this.isMessageRenderStep(step)) this.recordMessageRendering(result, "skipped");
         continue;
       }
       try {
         await this.applyStep(guild, step, roleMap, channelMap, options);
         result.success.push(step);
+        if (this.isMessageRenderStep(step)) this.recordMessageRendering(result, "rendered");
       } catch (error) {
         result.failed.push({ step, error: error instanceof Error ? error.message : String(error) });
+        if (this.isMessageRenderStep(step)) this.recordMessageRendering(result, "failed");
       }
     }
     return result;
@@ -69,6 +81,10 @@ export class GuildStateApplier {
     }
     if (step.objectType === "guild") {
       await this.applyGuildStep(guild, step, payload, channelMap);
+      return;
+    }
+    if (step.objectType === "message") {
+      await this.applyMessageStep(guild, step, payload, channelMap);
       return;
     }
     throw new Error(`Unsupported apply object type ${step.objectType}`);
@@ -158,6 +174,31 @@ export class GuildStateApplier {
     await guild.edit({ ...edit, reason: "DGit checkout/update guild" });
   }
 
+  private async applyMessageStep(guild: Guild, step: ApplyStep, payload: ApplyPayload | undefined, channelMap: Map<string, string>): Promise<void> {
+    if (step.action !== "render_message_record") throw new Error(`Unsupported message apply action ${step.action}`);
+    const message = this.messageFromPayload(payload);
+    const channel = this.resolveMessageChannel(guild, payload, channelMap);
+    if (!channel) throw new Error(`Target channel ${message.channelInternalId} was not resolved.`);
+    const sendable = channel as SendableChannel;
+    const attachmentNote = this.attachmentNote(message.attachments);
+    await sendable.send({
+      content: truncateDiscord([
+        "**DGit archived message render**",
+        "This is a new bot-authored archival record, not the original Discord message.",
+        `Original message ID: ${message.discordId}`,
+        `Original createdAt: ${message.createdAt}`,
+        `Original author: ${message.authorDisplayName ?? message.authorDiscordId ?? "unknown"}`,
+        `Original channel: ${message.channelInternalId}`,
+        message.editedAt ? `Original editedAt: ${message.editedAt}` : null,
+        message.pinned ? "Original pinned: true" : null,
+        attachmentNote,
+        "",
+        "Content:",
+        message.content ?? "[content unavailable]"
+      ].filter((line): line is string => Boolean(line)).join("\n"))
+    });
+  }
+
   private async createChannel(guild: Guild, snapshot: ChannelSnapshot, roleMap: Map<string, string>, channelMap: Map<string, string>, targetSnapshot?: DGitSnapshot): Promise<GuildBasedChannel> {
     const parentId = this.resolveParentCategoryId(guild, snapshot, channelMap, targetSnapshot);
     const options: GuildChannelCreateOptions = {
@@ -216,6 +257,7 @@ export class GuildStateApplier {
     const payload = step.payload as ApplyPayload | undefined;
     const before = payload?.before as { discordId?: string; internalId?: string; managed?: boolean; name?: string } | null | undefined;
     const after = payload?.after as { discordId?: string; internalId?: string; managed?: boolean; name?: string } | null | undefined;
+    if (step.objectType === "message") return this.messageSkipReason(guild, step, payload, channelMap);
     if (step.objectType === "channel" && this.referencesRepositoryChannel(step, before, after, options.repositoryChannelId)) {
       return "Repository channel is protected.";
     }
@@ -224,6 +266,21 @@ export class GuildStateApplier {
     const snapshot = (after ?? before) as RoleSnapshot | undefined;
     const role = snapshot ? this.findRole(guild, snapshot, roleMap) : null;
     if (role && this.isRoleAtOrAboveBot(role, guild)) return `Role ${role.name} is at or above the bot's highest role.`;
+    return null;
+  }
+
+  private messageSkipReason(guild: Guild, step: ApplyStep, payload: ApplyPayload | undefined, channelMap: Map<string, string>): string | null {
+    if (step.action !== "render_message_record") return "Message archive export steps are plan-only in this stage.";
+    let message: MessageSnapshot;
+    try {
+      message = this.messageFromPayload(payload);
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+    const channel = this.resolveMessageChannel(guild, payload, channelMap);
+    if (!channel) return `Target channel ${message.channelInternalId} was not found.`;
+    if (!this.isSupportedMessageRenderChannel(channel)) return `Target channel ${message.channelInternalId} does not support archived message rendering.`;
+    if (!this.canSendArchivedMessage(guild, channel)) return `Target channel ${message.channelInternalId} is inaccessible or missing SendMessages permission.`;
     return null;
   }
 
@@ -282,6 +339,15 @@ export class GuildStateApplier {
     const byName = guild.channels.cache.find((channel) => channel.name === snapshot.name && channel.type === snapshot.type);
     if (byName) channelMap.set(snapshot.internalId, byName.id);
     return byName ?? null;
+  }
+
+  private resolveMessageChannel(guild: Guild, payload: ApplyPayload | undefined, channelMap: Map<string, string>): GuildBasedChannel | null {
+    const message = this.messageFromPayload(payload);
+    const snapshot = payload?.targetSnapshot?.channels.find((channel) => channel.internalId === message.channelInternalId);
+    if (snapshot) return this.findChannel(guild, snapshot, channelMap);
+    const mapped = channelMap.get(message.channelInternalId);
+    if (mapped) return guild.channels.cache.get(mapped) ?? null;
+    return guild.channels.cache.get(message.channelInternalId) ?? null;
   }
 
   private resolveParentCategoryId(guild: Guild, snapshot: ChannelSnapshot, channelMap: Map<string, string>, targetSnapshot?: DGitSnapshot): string | null {
@@ -349,6 +415,48 @@ export class GuildStateApplier {
         return ChannelType.GuildText;
     }
   }
+
+  private isSupportedMessageRenderChannel(channel: GuildBasedChannel): boolean {
+    if (![
+      ChannelType.GuildText,
+      ChannelType.GuildAnnouncement,
+      ChannelType.PublicThread,
+      ChannelType.PrivateThread,
+      ChannelType.AnnouncementThread
+    ].includes(channel.type)) return false;
+    return typeof (channel as Partial<SendableChannel>).send === "function";
+  }
+
+  private canSendArchivedMessage(guild: Guild, channel: GuildBasedChannel): boolean {
+    const permissionsFor = (channel as { permissionsFor?(member: unknown): { has(permission: bigint): boolean } | null }).permissionsFor;
+    if (!permissionsFor) return true;
+    const permissions = permissionsFor.call(channel, guild.members.me);
+    return Boolean(permissions?.has(PermissionFlagsBits.ViewChannel) && permissions.has(PermissionFlagsBits.SendMessages));
+  }
+
+  private messageFromPayload(payload: ApplyPayload | undefined): MessageSnapshot {
+    const message = (payload as { message?: unknown } | undefined)?.message;
+    if (!message || typeof message !== "object") throw new Error("Missing message render payload.");
+    const candidate = message as Partial<MessageSnapshot>;
+    if (!candidate.internalId || !candidate.discordId || !candidate.channelInternalId || !candidate.createdAt || !Array.isArray(candidate.attachments)) {
+      throw new Error("Invalid message render payload.");
+    }
+    return candidate as MessageSnapshot;
+  }
+
+  private attachmentNote(attachments: AttachmentMeta[]): string | null {
+    if (attachments.length === 0) return null;
+    return `Attachments archived: ${attachments.length}. Files are not reuploaded in this stage; metadata hashes: ${attachments.map((attachment) => attachment.sha256).join(", ")}`;
+  }
+
+  private isMessageRenderStep(step: ApplyStep): boolean {
+    return step.objectType === "message" && step.action === "render_message_record";
+  }
+
+  private recordMessageRendering(result: ApplyResult, key: "rendered" | "skipped" | "failed"): void {
+    result.messageRendering ??= { rendered: 0, skipped: 0, failed: 0 };
+    result.messageRendering[key] += 1;
+  }
 }
 
 interface ApplyPayload {
@@ -356,4 +464,8 @@ interface ApplyPayload {
   after: unknown;
   path: string;
   targetSnapshot?: DGitSnapshot;
+}
+
+interface SendableChannel {
+  send(input: { content: string }): Promise<unknown>;
 }

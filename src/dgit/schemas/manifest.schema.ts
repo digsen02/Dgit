@@ -51,6 +51,7 @@ export const manifestSchema = z.object({
     commitFile: attachmentMetaSchema,
     snapshotFile: attachmentMetaSchema,
     diffFile: attachmentMetaSchema,
+    messageArchiveFile: attachmentMetaSchema.nullable().optional(),
     stateHash: z.string().startsWith("sha256:"),
     summary: diffSummarySchema
   })),
@@ -66,6 +67,12 @@ export const manifestSchema = z.object({
     maxAttachmentBytes: z.number().int().positive(),
     autocommit: z.boolean(),
     watch: z.boolean(),
+    messageBackup: z.object({
+      enabled: z.boolean(),
+      includeChannels: z.array(z.string()).optional(),
+      excludeChannels: z.array(z.string()).optional(),
+      restoreMode: z.enum(["structureOnly", "archiveOnly", "renderAsAppMessages"]).optional()
+    }).optional(),
     maintenance: z.object({
       enabled: z.boolean(),
       beforeCommit: z.string().optional()

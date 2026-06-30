@@ -45,6 +45,12 @@ export const dgitCommand = withDesc(
   .addSubcommand((sub) =>
     withDesc(sub.setName("restore"), "커밋 스냅샷 복원을 미리봅니다", "Preview restoring a commit snapshot", "预览恢复提交快照")
       .addStringOption((opt) => withDesc(opt.setName("commit"), "커밋 해시, 브랜치 또는 태그", "Commit hash, branch, or tag", "提交哈希、分支或标签").setRequired(true))
+      .addStringOption((opt) => withDesc(opt.setName("message-mode"), "Message archive restore mode", "Message archive restore mode", "Message archive restore mode")
+        .addChoices(
+          { name: "structureOnly", value: "structureOnly" },
+          { name: "archiveOnly", value: "archiveOnly" },
+          { name: "renderAsAppMessages", value: "renderAsAppMessages" }
+        ))
   )
   .addSubcommand((sub) => withDesc(sub.setName("verify"), "저장소 무결성을 검사합니다", "Verify repository integrity", "验证仓库完整性"))
   .addSubcommand((sub) => withDesc(sub.setName("check-permission"), "봇 권한을 점검합니다", "Check bot permissions", "检查机器人权限"));
@@ -159,6 +165,14 @@ export const dgitRepoCommand = withDesc(
       .addStringOption((opt) => withDesc(opt.setName("commit"), "선택 커밋/ref", "Optional commit/ref", "可选提交/ref"))
   )
   .addSubcommand((sub) =>
+    withDesc(sub.setName("archive-info"), "Show message archive metadata", "Show message archive metadata", "Show message archive metadata")
+      .addStringOption((opt) => withDesc(opt.setName("commit"), "Optional commit/ref", "Optional commit/ref", "Optional commit/ref"))
+  )
+  .addSubcommand((sub) =>
+    withDesc(sub.setName("export-message-archive"), "Export a message archive", "Export a message archive", "Export a message archive")
+      .addStringOption((opt) => withDesc(opt.setName("commit"), "Optional commit/ref", "Optional commit/ref", "Optional commit/ref"))
+  )
+  .addSubcommand((sub) =>
     withDesc(sub.setName("history"), "객체 변경 이력을 표시합니다", "Show object history", "显示对象历史")
       .addStringOption((opt) => withDesc(opt.setName("target"), "대상 타입", "Target type", "目标类型").setRequired(true).addChoices(
         { name: "channel", value: "channel" },
@@ -198,6 +212,32 @@ export const dgitAdminCommand = withDesc(
     withDesc(group.setName("maintenance"), "점검 모드", "Maintenance mode", "维护模式")
       .addSubcommand((sub) => withDesc(sub.setName("on"), "점검 모드 적용을 미리봅니다", "Preview maintenance mode", "预览维护模式"))
       .addSubcommand((sub) => withDesc(sub.setName("off"), "점검 모드를 끕니다", "Disable maintenance mode", "禁用维护模式"))
+  )
+  .addSubcommandGroup((group) =>
+    withDesc(group.setName("message-backup"), "Message backup settings", "Message backup settings", "Message backup settings")
+      .addSubcommand((sub) => withDesc(sub.setName("enable"), "Enable message backup", "Enable message backup", "Enable message backup"))
+      .addSubcommand((sub) => withDesc(sub.setName("disable"), "Disable message backup", "Disable message backup", "Disable message backup"))
+      .addSubcommand((sub) => withDesc(sub.setName("status"), "Show message backup settings", "Show message backup settings", "Show message backup settings"))
+      .addSubcommand((sub) =>
+        withDesc(sub.setName("restore-mode"), "Set default message restore mode", "Set default message restore mode", "Set default message restore mode")
+          .addStringOption((opt) => withDesc(opt.setName("mode"), "Default mode", "Default mode", "Default mode")
+            .setRequired(true)
+            .addChoices(
+              { name: "structureOnly", value: "structureOnly" },
+              { name: "archiveOnly", value: "archiveOnly" },
+              { name: "renderAsAppMessages", value: "renderAsAppMessages" },
+              { name: "none", value: "none" }
+            ))
+      )
+      .addSubcommand((sub) =>
+        withDesc(sub.setName("include-channel"), "Set included backup channel", "Set included backup channel", "Set included backup channel")
+          .addChannelOption((opt) => withDesc(opt.setName("channel"), "Channel", "Channel", "Channel").setRequired(true))
+      )
+      .addSubcommand((sub) =>
+        withDesc(sub.setName("exclude-channel"), "Set excluded backup channel", "Set excluded backup channel", "Set excluded backup channel")
+          .addChannelOption((opt) => withDesc(opt.setName("channel"), "Channel", "Channel", "Channel").setRequired(true))
+      )
+      .addSubcommand((sub) => withDesc(sub.setName("clear-channels"), "Clear message backup channel filters", "Clear message backup channel filters", "Clear message backup channel filters"))
   );
 
 export const commands = [dgitCommand, dgitBranchCommand, dgitIgnoreCommand, dgitMergeCommand, dgitTagCommand, dgitRepoCommand, dgitAdminCommand].map((command) => command.toJSON());

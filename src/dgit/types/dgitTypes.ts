@@ -33,6 +33,7 @@ export interface ManifestCommitEntry {
   commitFile: AttachmentMeta;
   snapshotFile: AttachmentMeta;
   diffFile: AttachmentMeta;
+  messageArchiveFile?: AttachmentMeta | null;
   stateHash: string;
   summary: DiffSummary;
 }
@@ -50,6 +51,12 @@ export interface RepositorySettings {
   maxAttachmentBytes: number;
   autocommit: boolean;
   watch: boolean;
+  messageBackup?: {
+    enabled: boolean;
+    includeChannels?: string[];
+    excludeChannels?: string[];
+    restoreMode?: MessageRestoreMode;
+  };
   maintenance?: {
     enabled: boolean;
     beforeCommit?: string;
@@ -86,8 +93,47 @@ export interface DGitCommit {
   secondParent: string | null;
   snapshotHash: string;
   diffHash: string;
+  messageArchiveHash?: string | null;
   stateHash: string;
   createdAt: string;
+}
+
+export type MessageRestoreMode = "structureOnly" | "archiveOnly" | "renderAsAppMessages";
+
+export interface DGitMessageArchive {
+  schemaVersion: 1;
+  type: "messageArchive";
+  createdAt: string;
+  guildId: Snowflake;
+  commitHash: string;
+  snapshotHash: string;
+  stateHash: string;
+  messages: MessageSnapshot[];
+  summary: MessageArchiveSummary;
+}
+
+export interface MessageSnapshot {
+  internalId: string;
+  discordId: Snowflake;
+  channelInternalId: string;
+  attachments: AttachmentMeta[];
+  createdAt: string;
+  threadInternalId?: string | null;
+  authorDiscordId?: Snowflake | null;
+  authorDisplayName?: string | null;
+  content?: string | null;
+  embeds?: unknown[];
+  replyToMessageInternalId?: string | null;
+  pinned?: boolean;
+  editedAt?: string | null;
+}
+
+export interface MessageArchiveSummary {
+  total: number;
+  byChannel: Record<string, number>;
+  withAttachments: number;
+  withEmbeds?: number;
+  unavailableContent?: number;
 }
 
 export interface GuildSettingsSnapshot {
@@ -211,6 +257,11 @@ export interface ApplyResult {
   failed: Array<{ step: ApplyStep; error: string }>;
   skipped: Array<{ step: ApplyStep; reason: string }>;
   warnings: string[];
+  messageRendering?: {
+    rendered: number;
+    skipped: number;
+    failed: number;
+  };
 }
 
 export interface MergeConflict {

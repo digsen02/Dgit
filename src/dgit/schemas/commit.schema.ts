@@ -12,6 +12,7 @@ export const commitSchema = z.object({
   secondParent: z.string().nullable(),
   snapshotHash: z.string().startsWith("sha256:"),
   diffHash: z.string().startsWith("sha256:"),
+  messageArchiveHash: z.string().startsWith("sha256:").nullable().optional(),
   stateHash: z.string().startsWith("sha256:"),
   createdAt: z.string()
 });

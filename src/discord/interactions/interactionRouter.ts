@@ -14,7 +14,7 @@ import {
   TextInputStyle
 } from "discord.js";
 import { DGitService } from "../../dgit/DGitService.js";
-import type { ApplyPlan, DGitDiff, ManifestCommitEntry } from "../../dgit/types/dgitTypes.js";
+import type { ApplyPlan, DGitDiff, ManifestCommitEntry, MessageRestoreMode } from "../../dgit/types/dgitTypes.js";
 import { formatSummary } from "../../utils/text.js";
 import { shortHash } from "../../utils/hash.js";
 import { ConfirmRouter } from "./confirmRouter.js";
@@ -198,7 +198,15 @@ export class InteractionRouter {
     try {
       const message = interaction.fields.getTextInputValue("message");
       const result = await this.service.commit(interaction.guild, interaction.user.id, message);
-      await interaction.editReply({ embeds: [buildSimpleResultEmbed({ title: t(interaction.locale, "commit"), description: t(interaction.locale, "createdCommit", { hash: shortHash(result.commit.hash), branch: result.commit.branch, summary: formatSummary(result.diff.summary) }) })] });
+      await interaction.editReply({ embeds: [buildSimpleResultEmbed({
+        title: t(interaction.locale, "commit"),
+        description: [
+          t(interaction.locale, "createdCommit", { hash: shortHash(result.commit.hash), branch: result.commit.branch, summary: formatSummary(result.diff.summary) }),
+          result.messageArchive
+            ? `Message archive: enabled, ${result.messageArchive.summary.total} messages, unavailable content ${result.messageArchive.summary.unavailableContent ?? 0}.`
+            : "Message archive: disabled or no eligible messages."
+        ].join("\n")
+      })] });
     } catch (error) {
       const content = error instanceof LocalizedError
         ? t(interaction.locale, error.key, error.vars)
@@ -283,7 +291,15 @@ export class InteractionRouter {
       this.requireManageGuild(interaction);
       const message = interaction.options.getString("message", true);
       const result = await this.service.commit(interaction.guild!, interaction.user.id, message);
-      await interaction.editReply({ embeds: [buildSimpleResultEmbed({ title: t(interaction.locale, "commit"), description: t(interaction.locale, "createdCommit", { hash: shortHash(result.commit.hash), branch: result.commit.branch, summary: formatSummary(result.diff.summary) }) })] });
+      await interaction.editReply({ embeds: [buildSimpleResultEmbed({
+        title: t(interaction.locale, "commit"),
+        description: [
+          t(interaction.locale, "createdCommit", { hash: shortHash(result.commit.hash), branch: result.commit.branch, summary: formatSummary(result.diff.summary) }),
+          result.messageArchive
+            ? `Message archive: enabled, ${result.messageArchive.summary.total} messages, unavailable content ${result.messageArchive.summary.unavailableContent ?? 0}.`
+            : "Message archive: disabled or no eligible messages."
+        ].join("\n")
+      })] });
       return;
     }
     if (sub === "log") {
@@ -314,7 +330,8 @@ export class InteractionRouter {
       await interaction.deferReply({ ephemeral: true });
       this.requireAdmin(interaction);
       const commit = interaction.options.getString("commit", true);
-      const { plan, repository } = await this.service.restorePlan(interaction.guild!, commit);
+      const messageMode = interaction.options.getString("message-mode") as MessageRestoreMode | null;
+      const { plan, repository } = await this.service.restorePlan(interaction.guild!, commit, messageMode ?? undefined);
       const token = `${interaction.id}-${Date.now().toString(36)}`;
       this.pendingRestores.set(token, {
         guildId: interaction.guild!.id,
@@ -502,6 +519,48 @@ export class InteractionRouter {
       await interaction.editReply({ embeds: [buildSimpleResultEmbed({ title: "Repository Export", description: t(interaction.locale, "exportedFile", { filename: result.filename }), fields: [{ name: "Filename", value: result.filename }] })], files: [result.attachment] });
       return;
     }
+    if (sub === "archive-info") {
+      this.requireAdmin(interaction);
+      const info = await this.service.messageArchiveInfo(interaction.guild!, interaction.options.getString("commit") ?? undefined);
+      await interaction.editReply({ embeds: [buildSimpleResultEmbed({
+        title: "Message Archive Info",
+        status: info.hasArchive ? "info" : "warning",
+        fields: [
+          { name: "Commit", value: shortHash(info.commitHash), inline: true },
+          { name: "Archive file", value: info.archiveFile ?? "none", inline: true },
+          { name: "Has archive", value: String(info.hasArchive), inline: true },
+          ...(info.archive ? [
+            { name: "Created at", value: info.archive.createdAt, inline: false },
+            { name: "Messages", value: String(info.archive.totalMessages), inline: true },
+            { name: "Channels", value: String(info.archive.channelsAffected), inline: true },
+            { name: "With attachments", value: String(info.archive.withAttachments), inline: true },
+            { name: "Unavailable content", value: String(info.archive.unavailableContent), inline: true },
+            { name: "State hash", value: shortHash(info.archive.stateHash), inline: true }
+          ] : [])
+        ]
+      })] });
+      return;
+    }
+    if (sub === "export-message-archive") {
+      this.requireAdmin(interaction);
+      const result = await this.service.exportMessageArchive(interaction.guild!, interaction.options.getString("commit") ?? undefined);
+      if (!result) {
+        await interaction.editReply({ embeds: [buildSimpleResultEmbed({ title: "Message Archive Export", status: "warning", description: "No message archive exists for this commit." })] });
+        return;
+      }
+      await interaction.editReply({
+        embeds: [buildSimpleResultEmbed({
+          title: "Message Archive Export",
+          description: [
+            t(interaction.locale, "exportedFile", { filename: result.filename }),
+            "This file contains archived message content. Share it only with authorized operators."
+          ].join("\n"),
+          fields: [{ name: "Filename", value: result.filename }]
+        })],
+        files: [result.attachment]
+      });
+      return;
+    }
     if (sub === "history") {
       const lines = await this.service.history(interaction.guild!, interaction.options.getString("target", true) as "channel" | "role" | "guild", interaction.options.getString("id") ?? undefined);
       await this.editReplyWithPages(interaction, { title: "DGit History", lines, emptyText: t(interaction.locale, "none"), userId: interaction.user.id });
@@ -527,6 +586,37 @@ export class InteractionRouter {
       await this.service.setAutocommit(interaction.guild!, sub === "enable");
       await interaction.editReply({ embeds: [buildSimpleResultEmbed({ title: "Autocommit", description: sub === "enable" ? t(interaction.locale, "autocommitEnabled") : t(interaction.locale, "autocommitDisabled") })] });
       return;
+    }
+    if (group === "message-backup") {
+      if (sub === "enable" || sub === "disable") {
+        const manifest = await this.service.setMessageBackup(interaction.guild!, { enabled: sub === "enable" });
+        await interaction.editReply({ embeds: [buildSimpleResultEmbed({ title: "Message Backup", description: this.messageBackupSettingsText(manifest.settings.messageBackup) })] });
+        return;
+      }
+      if (sub === "status") {
+        const { manifest } = await this.service.loadRepo(interaction.guild!);
+        await interaction.editReply({ embeds: [buildSimpleResultEmbed({ title: "Message Backup", description: this.messageBackupSettingsText(manifest.settings.messageBackup) })] });
+        return;
+      }
+      if (sub === "restore-mode") {
+        const mode = interaction.options.getString("mode", true);
+        const manifest = await this.service.setMessageBackup(interaction.guild!, { restoreMode: mode === "none" ? null : mode as MessageRestoreMode });
+        await interaction.editReply({ embeds: [buildSimpleResultEmbed({ title: "Message Backup", description: this.messageBackupSettingsText(manifest.settings.messageBackup) })] });
+        return;
+      }
+      if (sub === "include-channel" || sub === "exclude-channel") {
+        const channel = interaction.options.getChannel("channel", true);
+        const manifest = await this.service.setMessageBackup(interaction.guild!, sub === "include-channel"
+          ? { includeChannels: [channel.id] }
+          : { excludeChannels: [channel.id] });
+        await interaction.editReply({ embeds: [buildSimpleResultEmbed({ title: "Message Backup", description: this.messageBackupSettingsText(manifest.settings.messageBackup) })] });
+        return;
+      }
+      if (sub === "clear-channels") {
+        const manifest = await this.service.setMessageBackup(interaction.guild!, { clearChannels: true });
+        await interaction.editReply({ embeds: [buildSimpleResultEmbed({ title: "Message Backup", description: this.messageBackupSettingsText(manifest.settings.messageBackup) })] });
+        return;
+      }
     }
     if (group === "maintenance" && sub === "on") {
       const { plan, repository } = await this.service.maintenancePlan(interaction.guild!);
@@ -784,6 +874,16 @@ export class InteractionRouter {
   private backupReason(label: string, plan: ApplyPlan): string {
     const targetHash = plan.targetSnapshot?.stateHash ? ` ${shortHash(plan.targetSnapshot.stateHash)}` : "";
     return `${label}${targetHash}`;
+  }
+
+  private messageBackupSettingsText(settings: { enabled: boolean; includeChannels?: string[]; excludeChannels?: string[]; restoreMode?: string } | undefined): string {
+    return [
+      `Enabled: ${settings?.enabled === true}`,
+      `Default restore mode: ${settings?.restoreMode ?? "none"}`,
+      `Include channels: ${settings?.includeChannels?.join(", ") || "none"}`,
+      `Exclude channels: ${settings?.excludeChannels?.join(", ") || "none"}`,
+      "Message archives may contain sensitive message content. Export and render commands require Administrator permission."
+    ].join("\n");
   }
 
   private statusButtons(locale: string, changeCount: number, clean: boolean): ActionRowBuilder<ButtonBuilder> {
