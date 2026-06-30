@@ -241,6 +241,11 @@ export function buildApplyResultEmbed(options: {
       { name: "Success", value: String(options.result.success.length), inline: true },
       { name: "Skipped", value: String(options.result.skipped.length), inline: true },
       { name: "Failed", value: String(options.result.failed.length), inline: true },
+      ...(options.result.messageRendering ? [{
+        name: "Message rendering",
+        value: `Rendered: ${options.result.messageRendering.rendered}\nSkipped: ${options.result.messageRendering.skipped}\nFailed: ${options.result.messageRendering.failed}`,
+        inline: false
+      }] : []),
       ...(details.length ? [{ name: "Details", value: details.join("\n"), inline: false }] : [])
     ]
   });

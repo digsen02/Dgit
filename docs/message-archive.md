@@ -26,6 +26,8 @@ Rendered archive messages have new Discord message IDs, new actual creation time
 
 Message archives can contain sensitive message content. Message backup configuration, archive export, archive info, and `renderAsAppMessages` restore previews require Administrator permission through the existing command guards. Do not share exported archive files with unauthorized users.
 
+The bot must request `GatewayIntentBits.MessageContent`, and the privileged Message Content Intent must also be enabled for the application in the Discord Developer Portal. If content is unavailable, DGit stores a safe unavailable/null content value and continues.
+
 ## Limitations
 
 - Deleted Discord messages cannot be recreated as the original messages.
@@ -36,3 +38,4 @@ Message archives can contain sensitive message content. Message backup configura
 - Attachments are currently represented by archived metadata and hashes during rendering; files are not reuploaded unless a future storage path provides attachment bytes.
 - Rendering is sequential to reduce rate-limit pressure, but large archives may still be rate-limited.
 - If message content was unavailable at collection time, render output shows `[content unavailable]`.
+- Message-only commits are allowed when message backup is enabled. DGit avoids obvious duplicates by comparing the new archive messages and summary with the current HEAD archive; more advanced deduplication is not implemented.

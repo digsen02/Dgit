@@ -87,6 +87,35 @@ describe("DGitService message archive commit integration", () => {
     await expect(ctx.service.commit({ id: "guild1" } as never, "u1", "change")).rejects.toThrow(/archive upload failed/);
     expect(ctx.manifestUploads).toHaveLength(0);
   });
+
+  it("creates a message-only archive commit when structural diff is clean and messageBackup is enabled", async () => {
+    const live = snapshot({ stateHash: "sha256:clean" });
+    const manifest = manifestWithHead(live);
+    manifest.settings.messageBackup = { enabled: true };
+    const ctx = serviceContext(manifest, live, {
+      collectArchive: async (options) => ({
+        archive: archiveFor(options.guildId, options.commitHash, options.snapshotHash, options.stateHash),
+        warnings: []
+      })
+    });
+
+    const result = await ctx.service.commit({ id: "guild1" } as never, "u1", "message-only");
+
+    expect(result.diff.changes).toHaveLength(0);
+    expect(result.messageArchive?.summary.total).toBe(1);
+    expect(result.manifest.commits[result.commit.hash]?.messageArchiveFile).toBeDefined();
+  });
+
+  it("still rejects clean structural commits when messageBackup is disabled", async () => {
+    const live = snapshot({ stateHash: "sha256:clean" });
+    const manifest = manifestWithHead(live);
+    manifest.settings.messageBackup = { enabled: false };
+    const ctx = serviceContext(manifest, live, {
+      collectArchive: async () => ({ archive: null, warnings: [] })
+    });
+
+    await expect(ctx.service.commit({ id: "guild1" } as never, "u1", "clean")).rejects.toThrow(/workingTreeClean|Working tree clean/);
+  });
 });
 
 function serviceContext(
@@ -101,6 +130,7 @@ function serviceContext(
   const manifestUploads: DGitManifest[] = [];
   const storage = {
     loadManifest: async () => structuredClone(manifest),
+    loadSnapshot: async () => live,
     uploadCommitObjects: async (
       _repository: unknown,
       commit: DGitCommit,
@@ -139,6 +169,52 @@ function serviceContext(
     { collect: async (_guild: unknown, input: { guildId: string; commitHash: string; snapshotHash: string; stateHash: string }) => options.collectArchive(input) } as never
   );
   return { service, uploaded, manifestUploads };
+}
+
+function manifestWithHead(live: DGitSnapshot): DGitManifest {
+  const manifest = new ManifestService().createInitial("guild1", "u1");
+  const diff = {
+    schemaVersion: 1,
+    type: "diff",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    guildId: "guild1",
+    from: null,
+    to: live.stateHash,
+    changes: [],
+    summary: { added: 0, deleted: 0, updated: 0, moved: 0, permissionUpdates: 0, dangerous: 0 }
+  } as const;
+  const commit = {
+    schemaVersion: 1,
+    type: "commit",
+    hash: "sha256:head",
+    guildId: "guild1",
+    branch: "main",
+    message: "head",
+    authorId: "u1",
+    parent: null,
+    secondParent: null,
+    snapshotHash: sha256Json(live),
+    diffHash: sha256Json(diff),
+    stateHash: live.stateHash,
+    createdAt: "2026-01-01T00:00:00.000Z"
+  } as const;
+  manifest.head = commit.hash;
+  manifest.branches.main!.head = commit.hash;
+  manifest.commits[commit.hash] = {
+    hash: commit.hash,
+    message: commit.message,
+    authorId: commit.authorId,
+    branch: commit.branch,
+    parent: commit.parent,
+    secondParent: commit.secondParent,
+    createdAt: commit.createdAt,
+    commitFile: attachment("commit-head.json.gz"),
+    snapshotFile: attachment("snapshot-head.json.gz"),
+    diffFile: attachment("diff-head.json.gz"),
+    stateHash: commit.stateHash,
+    summary: diff.summary
+  };
+  return manifest;
 }
 
 function attachment(filename: string): AttachmentMeta {

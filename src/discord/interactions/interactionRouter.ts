@@ -251,8 +251,12 @@ export class InteractionRouter {
     try {
       const result = await this.service.applyRestorePlan(interaction.guild, pending.plan, pending.repositoryChannelId, interaction.user.id, pending.backupReason);
       this.pendingRestores.delete(token);
+      const messageRenderingDescription = result.messageRendering
+        ? `Message rendering: rendered ${result.messageRendering.rendered}, skipped ${result.messageRendering.skipped}, failed ${result.messageRendering.failed}.`
+        : undefined;
       await interaction.editReply({ embeds: [buildApplyResultEmbed({
         title: t(interaction.locale, "restoreFinished", { success: String(result.success.length), skipped: String(result.skipped.length), failed: String(result.failed.length), details: "" }),
+        ...(messageRenderingDescription ? { description: messageRenderingDescription } : {}),
         result,
         failedDetails: result.failed.slice(0, 5).map((f) => `${f.step.id}: ${f.error}`),
         skippedDetails: result.skipped.slice(0, 5).map((s) => `${s.step.id}: ${s.reason}`)

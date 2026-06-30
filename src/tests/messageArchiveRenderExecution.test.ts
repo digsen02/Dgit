@@ -2,6 +2,7 @@ import { ChannelType, PermissionFlagsBits } from "discord.js";
 import { describe, expect, it } from "vitest";
 import { GuildStateApplier } from "../dgit/GuildStateApplier.js";
 import type { ApplyPlan, ApplyStep, ChannelSnapshot, MessageSnapshot } from "../dgit/types/dgitTypes.js";
+import { buildApplyResultEmbed } from "../discord/embeds/dgitEmbeds.js";
 import { snapshot } from "./fixtures.js";
 
 describe("message archive render execution", () => {
@@ -105,6 +106,23 @@ describe("message archive render execution", () => {
 
     expect(sent[0]?.content).toContain("Attachments archived: 1");
     expect(sent[0]?.content).toContain("sha256:attachment");
+  });
+
+  it("shows message rendering counts in apply result embeds", () => {
+    const embed = buildApplyResultEmbed({
+      title: "Restore",
+      result: {
+        success: [],
+        skipped: [],
+        failed: [],
+        warnings: [],
+        messageRendering: { rendered: 2, skipped: 1, failed: 0 }
+      }
+    }).toJSON();
+
+    expect(JSON.stringify(embed)).toContain("Message rendering");
+    expect(JSON.stringify(embed)).toContain("Rendered: 2");
+    expect(JSON.stringify(embed)).toContain("Skipped: 1");
   });
 });
 

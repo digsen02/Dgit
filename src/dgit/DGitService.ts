@@ -76,7 +76,8 @@ export class DGitService {
     const headSnapshot = await this.loadHeadSnapshot(repository, manifest);
     const live = await this.collectIgnored(guild, manifest);
     const diff = this.diffEngine.compute(headSnapshot, live, manifest.head, live.stateHash);
-    if (diff.changes.length === 0) throw new LocalizedError("workingTreeClean");
+    const structureClean = diff.changes.length === 0;
+    if (structureClean && !isMessageBackupEnabled(manifest.settings)) throw new LocalizedError("workingTreeClean");
     const branch = manifest.currentBranch;
     const commit = this.buildCommit({
       guildId: guild.id,
@@ -91,6 +92,12 @@ export class DGitService {
     if (manifest.commits[commit.hash]) throw new LocalizedError("commitHashCollision");
     await this.assertManifestSequence(repository, manifest.manifestSequence);
     const prepared = await this.prepareCommitObjects(guild, manifest, repository, commit, live, diff);
+    if (structureClean) {
+      if (!prepared.messageArchive) throw new LocalizedError("workingTreeClean");
+      if (await this.messageArchiveEquivalentToHead(guild, manifest, prepared.messageArchive)) {
+        throw new LocalizedError("workingTreeClean");
+      }
+    }
     const updated = this.manifests.addCommit(manifest, this.entryFrom(prepared.commit, diff, prepared.files));
     await this.storage.uploadManifest(repository, updated, manifest.manifestSequence);
     return { commit: prepared.commit, diff, manifest: updated, messageArchive: prepared.messageArchive };
@@ -160,7 +167,7 @@ export class DGitService {
       manifest,
       repository,
       target,
-      plan: await this.withMessageRestorePlan(guild, manifest, hash, plan, selectedMessageRestoreMode)
+      plan: await this.withMessageRestorePlan(guild, manifest, hash, plan, selectedMessageRestoreMode, Boolean(messageRestoreMode || manifest.settings.messageBackup?.restoreMode))
     };
   }
 
@@ -716,11 +723,20 @@ export class DGitService {
     manifest: DGitManifest,
     commitHash: string,
     plan: ApplyPlan,
-    mode?: MessageRestoreMode
+    mode: MessageRestoreMode | undefined,
+    modeSelected: boolean
   ): Promise<ApplyPlan> {
-    if (!mode) return plan;
     const entry = manifest.commits[commitHash];
-    const base = mode === "archiveOnly" ? { ...plan, changes: [], steps: [], dangerousCount: 0 } : { ...plan, steps: [...plan.steps], warnings: [...plan.warnings] };
+    const hasArchive = Boolean(entry?.messageArchiveFile);
+    const base = mode === "archiveOnly" ? { ...plan, changes: [], steps: [], dangerousCount: 0, warnings: [...plan.warnings] } : { ...plan, steps: [...plan.steps], warnings: [...plan.warnings] };
+    base.warnings.push(`Message archive on target commit: ${hasArchive ? "present" : "none"}.`);
+    base.warnings.push(`Selected message restore mode: ${mode ?? "none"}.`);
+    if (!mode) {
+      if (hasArchive && !modeSelected) {
+        base.warnings.push("This commit has a message archive, but no message restore mode was selected. Use message-mode:renderAsAppMessages or set a default restore mode.");
+      }
+      return base;
+    }
 
     if (mode === "structureOnly") {
       if (entry?.messageArchiveFile) base.warnings.push("Message archive exists for the target commit but structureOnly mode will not apply it.");
@@ -745,6 +761,7 @@ export class DGitService {
       a.internalId.localeCompare(b.internalId)
     );
     base.steps.push(...messages.map((message, index) => this.messageRenderStep(base.steps.length + index, loaded.archive, message, plan.targetSnapshot)));
+    base.warnings.push(`Expected message render steps: ${messages.length}.`);
     return base;
   }
 
@@ -802,6 +819,21 @@ export class DGitService {
         ...(targetSnapshot ? { targetSnapshot } : {})
       }
     };
+  }
+
+  private async messageArchiveEquivalentToHead(guild: Guild, manifest: DGitManifest, archive: DGitMessageArchive): Promise<boolean> {
+    if (!manifest.head) return false;
+    const headEntry = manifest.commits[manifest.head];
+    if (!headEntry?.messageArchiveFile) return false;
+    const previous = await this.loadMessageArchive(guild, manifest.head).catch(() => null);
+    if (!previous) return false;
+    return stableStringify({
+      messages: previous.archive.messages,
+      summary: previous.archive.summary
+    }) === stableStringify({
+      messages: archive.messages,
+      summary: archive.summary
+    });
   }
 
   private async loadHeadSnapshot(repository: TextChannel, manifest: DGitManifest): Promise<DGitSnapshot | null> {

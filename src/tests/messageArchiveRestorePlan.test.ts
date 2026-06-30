@@ -18,6 +18,8 @@ describe("message archive restore plan integration", () => {
 
     expect(plan.steps.some((step) => step.objectType === "message")).toBe(false);
     expect(plan.warnings.join("\n")).not.toContain("Original Discord message IDs");
+    expect(plan.warnings.join("\n")).toContain("Message archive on target commit: present");
+    expect(plan.warnings.join("\n")).toContain("no message restore mode was selected");
   });
 
   it("structureOnly creates no message execution steps", async () => {
@@ -92,6 +94,15 @@ describe("message archive restore plan integration", () => {
 
     expect(plan.steps).toHaveLength(0);
     expect(plan.warnings.join("\n")).toContain("No message archive is available");
+  });
+
+  it("restore preview shows no archive warning when target commit has no archive", async () => {
+    const { service } = serviceWithArchive(null);
+
+    const { plan } = await service.restorePlan({ id: "guild1" } as never, "sha256:commit");
+
+    expect(plan.warnings.join("\n")).toContain("Message archive on target commit: none");
+    expect(plan.warnings.join("\n")).toContain("Selected message restore mode: none");
   });
 });
 
