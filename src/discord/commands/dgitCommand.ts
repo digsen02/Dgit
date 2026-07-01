@@ -1,21 +1,21 @@
 import { ChannelType, PermissionFlagsBits, SlashCommandBuilder } from "discord.js";
 import { commandLocalizations } from "../../i18n/i18n.js";
 
-function withDesc<T extends { setDescription(description: string): T; setDescriptionLocalizations(localizations: Record<string, string>): T }>(
-  builder: T,
-  ko: string,
-  en: string,
-  zh: string
-): T {
+type LocalizedDescriptionBuilder = {
+  setDescription(description: string): LocalizedDescriptionBuilder;
+  setDescriptionLocalizations(localizations: Record<string, string>): LocalizedDescriptionBuilder;
+};
+
+function withDesc<T extends LocalizedDescriptionBuilder>(builder: T, ko: string, en: string, zh: string): T {
   const value = commandLocalizations(ko, en, zh);
-  return builder.setDescription(value.description).setDescriptionLocalizations(value.localizations);
+  return builder.setDescription(value.description).setDescriptionLocalizations(value.localizations) as T;
 }
 
 export const dgitCommand = withDesc(
   new SlashCommandBuilder().setName("dgit"),
   "Discord 서버 설정을 Git처럼 버전 관리합니다",
   "Discord-native Git-inspired guild version control",
-  "Discord 原生的 Git 风格服务器版本控制"
+  "像 Git 一样管理 Discord 服务器配置版本"
 )
   // This command mixes read-only subcommands with init/commit/restore. Runtime checks
   // stay authoritative so status/log/diff/verify remain usable by normal members.
@@ -30,7 +30,7 @@ export const dgitCommand = withDesc(
   .addSubcommand((sub) => withDesc(sub.setName("status"), "현재 서버 상태와 HEAD를 비교합니다", "Compare live guild state with HEAD", "比较当前服务器状态与 HEAD"))
   .addSubcommand((sub) =>
     withDesc(sub.setName("commit"), "현재 서버 상태를 커밋합니다", "Commit current guild state", "提交当前服务器状态")
-      .addStringOption((opt) => withDesc(opt.setName("message"), "커밋 메시지", "Commit message", "提交信息").setRequired(true).setMaxLength(256))
+      .addStringOption((opt) => withDesc(opt.setName("message"), "커밋 메시지", "Commit message", "提交消息").setRequired(true).setMaxLength(256))
   )
   .addSubcommand((sub) =>
     withDesc(sub.setName("log"), "커밋 기록을 표시합니다", "Show commit history", "显示提交历史")
@@ -45,7 +45,7 @@ export const dgitCommand = withDesc(
   .addSubcommand((sub) =>
     withDesc(sub.setName("restore"), "커밋 스냅샷 복원을 미리봅니다", "Preview restoring a commit snapshot", "预览恢复提交快照")
       .addStringOption((opt) => withDesc(opt.setName("commit"), "커밋 해시, 브랜치 또는 태그", "Commit hash, branch, or tag", "提交哈希、分支或标签").setRequired(true))
-      .addStringOption((opt) => withDesc(opt.setName("message-mode"), "Message archive restore mode", "Message archive restore mode", "Message archive restore mode")
+      .addStringOption((opt) => withDesc(opt.setName("message-mode"), "메시지 아카이브 복원 모드", "Message archive restore mode", "消息归档恢复模式")
         .addChoices(
           { name: "structureOnly", value: "structureOnly" },
           { name: "archiveOnly", value: "archiveOnly" },
@@ -66,7 +66,7 @@ export const dgitBranchCommand = withDesc(
   .addSubcommand((sub) =>
     withDesc(sub.setName("create"), "브랜치를 생성합니다", "Create a branch", "创建分支")
       .addStringOption((opt) => withDesc(opt.setName("name"), "브랜치 이름", "Branch name", "分支名称").setRequired(true))
-      .addStringOption((opt) => withDesc(opt.setName("from"), "선택 커밋 또는 ref", "Optional commit/ref", "可选提交/ref"))
+      .addStringOption((opt) => withDesc(opt.setName("from"), "선택 커밋 또는 ref", "Optional commit/ref", "可选提交或 ref"))
   )
   .addSubcommand((sub) => withDesc(sub.setName("list"), "브랜치 목록을 표시합니다", "List branches", "列出分支"))
   .addSubcommand((sub) =>
@@ -92,7 +92,7 @@ export const dgitIgnoreCommand = withDesc(
   .addSubcommand((sub) =>
     withDesc(sub.setName("add"), "ignore 규칙을 추가합니다", "Add ignore rule", "添加 ignore 规则")
       .addStringOption((opt) =>
-        withDesc(opt.setName("type"), "규칙 타입", "Rule type", "规则类型")
+        withDesc(opt.setName("type"), "규칙 유형", "Rule type", "规则类型")
           .setRequired(true)
           .addChoices(
             { name: "channel", value: "channel" },
@@ -106,7 +106,7 @@ export const dgitIgnoreCommand = withDesc(
   .addSubcommand((sub) =>
     withDesc(sub.setName("remove"), "ignore 규칙을 제거합니다", "Remove ignore rule", "移除 ignore 规则")
       .addStringOption((opt) =>
-        withDesc(opt.setName("type"), "규칙 타입", "Rule type", "规则类型")
+        withDesc(opt.setName("type"), "규칙 유형", "Rule type", "规则类型")
           .setRequired(true)
           .addChoices(
             { name: "channel", value: "channel" },
@@ -142,7 +142,7 @@ export const dgitTagCommand = withDesc(
   .addSubcommand((sub) =>
     withDesc(sub.setName("create"), "태그를 생성합니다", "Create a tag", "创建标签")
       .addStringOption((opt) => withDesc(opt.setName("name"), "태그 이름", "Tag name", "标签名称").setRequired(true))
-      .addStringOption((opt) => withDesc(opt.setName("commit"), "선택 커밋/ref", "Optional commit/ref", "可选提交/ref"))
+      .addStringOption((opt) => withDesc(opt.setName("commit"), "선택 커밋/ref", "Optional commit/ref", "可选提交或 ref"))
   )
   .addSubcommand((sub) => withDesc(sub.setName("list"), "태그 목록을 표시합니다", "List tags", "列出标签"))
   .addSubcommand((sub) =>
@@ -158,23 +158,23 @@ export const dgitRepoCommand = withDesc(
 )
   // Repair is admin-only, but export/history/blame are read-only.
   .addSubcommand((sub) =>
-    withDesc(sub.setName("repair"), "저장소 매니페스트를 복구합니다", "Repair repository manifest", "修复仓库 manifest")
+    withDesc(sub.setName("repair"), "저장소 manifest를 복구합니다", "Repair repository manifest", "修复仓库 manifest")
   )
   .addSubcommand((sub) =>
     withDesc(sub.setName("export"), "스냅샷을 내보냅니다", "Export a snapshot", "导出快照")
-      .addStringOption((opt) => withDesc(opt.setName("commit"), "선택 커밋/ref", "Optional commit/ref", "可选提交/ref"))
+      .addStringOption((opt) => withDesc(opt.setName("commit"), "선택 커밋/ref", "Optional commit/ref", "可选提交或 ref"))
   )
   .addSubcommand((sub) =>
-    withDesc(sub.setName("archive-info"), "Show message archive metadata", "Show message archive metadata", "Show message archive metadata")
-      .addStringOption((opt) => withDesc(opt.setName("commit"), "Optional commit/ref", "Optional commit/ref", "Optional commit/ref"))
+    withDesc(sub.setName("archive-info"), "메시지 아카이브 메타데이터를 표시합니다", "Show message archive metadata", "显示消息归档元数据")
+      .addStringOption((opt) => withDesc(opt.setName("commit"), "선택 커밋/ref", "Optional commit/ref", "可选提交或 ref"))
   )
   .addSubcommand((sub) =>
-    withDesc(sub.setName("export-message-archive"), "Export a message archive", "Export a message archive", "Export a message archive")
-      .addStringOption((opt) => withDesc(opt.setName("commit"), "Optional commit/ref", "Optional commit/ref", "Optional commit/ref"))
+    withDesc(sub.setName("export-message-archive"), "메시지 아카이브를 내보냅니다", "Export a message archive", "导出消息归档")
+      .addStringOption((opt) => withDesc(opt.setName("commit"), "선택 커밋/ref", "Optional commit/ref", "可选提交或 ref"))
   )
   .addSubcommand((sub) =>
     withDesc(sub.setName("history"), "객체 변경 이력을 표시합니다", "Show object history", "显示对象历史")
-      .addStringOption((opt) => withDesc(opt.setName("target"), "대상 타입", "Target type", "目标类型").setRequired(true).addChoices(
+      .addStringOption((opt) => withDesc(opt.setName("target"), "대상 유형", "Target type", "目标类型").setRequired(true).addChoices(
         { name: "channel", value: "channel" },
         { name: "role", value: "role" },
         { name: "guild", value: "guild" }
@@ -183,7 +183,7 @@ export const dgitRepoCommand = withDesc(
   )
   .addSubcommand((sub) =>
     withDesc(sub.setName("blame"), "필드별 마지막 변경 커밋을 표시합니다", "Show latest commit per field", "显示每个字段的最新提交")
-      .addStringOption((opt) => withDesc(opt.setName("target"), "대상 타입", "Target type", "目标类型").setRequired(true).addChoices(
+      .addStringOption((opt) => withDesc(opt.setName("target"), "대상 유형", "Target type", "目标类型").setRequired(true).addChoices(
         { name: "channel", value: "channel" },
         { name: "role", value: "role" },
         { name: "guild", value: "guild" }
@@ -199,9 +199,9 @@ export const dgitAdminCommand = withDesc(
 )
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addSubcommandGroup((group) =>
-    withDesc(group.setName("watch"), "변경 감시 설정", "Watch settings", "监听设置")
-      .addSubcommand((sub) => withDesc(sub.setName("enable"), "watch를 켭니다", "Enable watch", "启用监听"))
-      .addSubcommand((sub) => withDesc(sub.setName("disable"), "watch를 끕니다", "Disable watch", "禁用监听"))
+    withDesc(group.setName("watch"), "변경 감시 설정", "Watch settings", "变更监视设置")
+      .addSubcommand((sub) => withDesc(sub.setName("enable"), "watch를 켭니다", "Enable watch", "启用监视"))
+      .addSubcommand((sub) => withDesc(sub.setName("disable"), "watch를 끕니다", "Disable watch", "禁用监视"))
   )
   .addSubcommandGroup((group) =>
     withDesc(group.setName("autocommit"), "자동 커밋 설정", "Autocommit settings", "自动提交设置")
@@ -214,13 +214,13 @@ export const dgitAdminCommand = withDesc(
       .addSubcommand((sub) => withDesc(sub.setName("off"), "점검 모드를 끕니다", "Disable maintenance mode", "禁用维护模式"))
   )
   .addSubcommandGroup((group) =>
-    withDesc(group.setName("message-backup"), "Message backup settings", "Message backup settings", "Message backup settings")
-      .addSubcommand((sub) => withDesc(sub.setName("enable"), "Enable message backup", "Enable message backup", "Enable message backup"))
-      .addSubcommand((sub) => withDesc(sub.setName("disable"), "Disable message backup", "Disable message backup", "Disable message backup"))
-      .addSubcommand((sub) => withDesc(sub.setName("status"), "Show message backup settings", "Show message backup settings", "Show message backup settings"))
+    withDesc(group.setName("message-backup"), "메시지 백업 설정", "Message backup settings", "消息备份设置")
+      .addSubcommand((sub) => withDesc(sub.setName("enable"), "메시지 백업을 켭니다", "Enable message backup", "启用消息备份"))
+      .addSubcommand((sub) => withDesc(sub.setName("disable"), "메시지 백업을 끕니다", "Disable message backup", "禁用消息备份"))
+      .addSubcommand((sub) => withDesc(sub.setName("status"), "메시지 백업 설정을 표시합니다", "Show message backup settings", "显示消息备份设置"))
       .addSubcommand((sub) =>
-        withDesc(sub.setName("restore-mode"), "Set default message restore mode", "Set default message restore mode", "Set default message restore mode")
-          .addStringOption((opt) => withDesc(opt.setName("mode"), "Default mode", "Default mode", "Default mode")
+        withDesc(sub.setName("restore-mode"), "기본 메시지 복원 모드를 설정합니다", "Set default message restore mode", "设置默认消息恢复模式")
+          .addStringOption((opt) => withDesc(opt.setName("mode"), "기본 모드", "Default mode", "默认模式")
             .setRequired(true)
             .addChoices(
               { name: "structureOnly", value: "structureOnly" },
@@ -230,14 +230,14 @@ export const dgitAdminCommand = withDesc(
             ))
       )
       .addSubcommand((sub) =>
-        withDesc(sub.setName("include-channel"), "Set included backup channel", "Set included backup channel", "Set included backup channel")
-          .addChannelOption((opt) => withDesc(opt.setName("channel"), "Channel", "Channel", "Channel").setRequired(true))
+        withDesc(sub.setName("include-channel"), "백업 포함 채널을 설정합니다", "Set included backup channel", "设置包含的备份频道")
+          .addChannelOption((opt) => withDesc(opt.setName("channel"), "채널", "Channel", "频道").setRequired(true))
       )
       .addSubcommand((sub) =>
-        withDesc(sub.setName("exclude-channel"), "Set excluded backup channel", "Set excluded backup channel", "Set excluded backup channel")
-          .addChannelOption((opt) => withDesc(opt.setName("channel"), "Channel", "Channel", "Channel").setRequired(true))
+        withDesc(sub.setName("exclude-channel"), "백업 제외 채널을 설정합니다", "Set excluded backup channel", "设置排除的备份频道")
+          .addChannelOption((opt) => withDesc(opt.setName("channel"), "채널", "Channel", "频道").setRequired(true))
       )
-      .addSubcommand((sub) => withDesc(sub.setName("clear-channels"), "Clear message backup channel filters", "Clear message backup channel filters", "Clear message backup channel filters"))
+      .addSubcommand((sub) => withDesc(sub.setName("clear-channels"), "메시지 백업 채널 필터를 지웁니다", "Clear message backup channel filters", "清除消息备份频道筛选"))
   );
 
 export const commands = [dgitCommand, dgitBranchCommand, dgitIgnoreCommand, dgitMergeCommand, dgitTagCommand, dgitRepoCommand, dgitAdminCommand].map((command) => command.toJSON());
