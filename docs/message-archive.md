@@ -26,7 +26,7 @@ Rendered archive messages have new Discord message IDs, new actual creation time
 
 Message archives can contain sensitive message content. Message backup configuration, archive export, archive info, and `renderAsAppMessages` restore previews require Administrator permission through the existing command guards. Do not share exported archive files with unauthorized users.
 
-The bot must request `GatewayIntentBits.MessageContent`, and the privileged Message Content Intent must also be enabled for the application in the Discord Developer Portal. If content is unavailable, DGit stores a safe unavailable/null content value and continues.
+To collect message text, enable the privileged Message Content Intent for the application in the Discord Developer Portal, then set `ENABLE_MESSAGE_CONTENT_INTENT=true` in `.env`. If either side is disabled, the bot can still run, but archived message content may be unavailable or null.
 
 ## Limitations
 

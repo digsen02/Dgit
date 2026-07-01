@@ -8,6 +8,7 @@ const envSchema = z.object({
   NODE_ENV: z.string().default("development"),
   COMMAND_SCOPE: z.enum(["guild", "global"]).default("guild"),
   COMMAND_REPLACE_SCOPE: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+  ENABLE_MESSAGE_CONTENT_INTENT: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
   BOT_LOCALE: z.enum(["ko", "en", "zh"]).default("ko")
 });
 
